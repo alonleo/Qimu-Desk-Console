@@ -69,3 +69,13 @@
 @media (max-width: 1100px) { .workspace { grid-template-columns: 180px minmax(0,1fr); } .main { padding: 20px; } .docMeta { display: none; } .split { grid-template-columns: minmax(0,1fr); } .split .preview { border-left: 0; border-top: 1px solid var(--line); } }
 @media (max-width: 700px) { .header { margin-bottom: 16px; } .heading p { max-width: 210px; } .workspace { grid-template-columns: minmax(0,1fr); } .sidebar { padding: 14px; border-right: 0; border-bottom: 1px solid var(--line); } .library,.sidebarNote,.sectionLabel { display: none; } .categories { display: flex; margin: 0 0 12px; overflow-x: auto; } .navItem { width: auto; flex-shrink: 0; white-space: nowrap; } .tagSelect { max-width: 100%; } .main { padding: 16px; } .toolbar .search { flex-basis: 100%; } .fileIcon { display: none; } .article { padding: 4px 0; } .article h2 { font-size: 23px; } .preview { padding: 16px; } .saveState { display: none; } .editorFields { gap: 12px; } .editorFields .field { flex: 1; min-width: 120px; } .grid { grid-template-columns: minmax(0,1fr); } }
 @media (prefers-reduced-motion: reduce) { .document { transition: none; } }
+
+.taxonomy { display: grid; gap: 16px; }
+.taxonomyHint { margin: 0; color: var(--ant-color-text-secondary, #687787); font-size: 12px; line-height: 1.8; }
+.taxonomyForm { display: flex; gap: 8px; }
+.taxonomyHeading { display: flex; align-items: center; justify-content: space-between; color: #687787; font-size: 12px; }
+.taxonomyList { list-style: none; padding: 0; margin: 0; }
+.taxonomyList li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid #e3e8ee; }
+.taxonomyList li > div { min-width: 0; display: grid; gap: 5px; }
+.taxonomyList strong { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.taxonomyList li > div > span { color: #687787; font-size: 12px; }

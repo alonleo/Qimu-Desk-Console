@@ -10,6 +10,7 @@ import SourceTag from "@/components/SourceTag";
 import VisibilityTag from "@/components/VisibilityTag";
 import VisibilitySelect from "@/components/VisibilitySelect";
 import styles from "./knowledge.module.css";
+import TaxonomyManager from "./TaxonomyManager";
 
 const DocMarkdown = dynamic(() => import("./DocMarkdownBody"), { ssr: false, loading: () => <p>正在加载正文…</p> });
 type CategoryItem = { id: number; name: string; count: number };
@@ -50,6 +51,7 @@ export default function KnowledgeView({ initialDocs, initialCategories, initialT
   const [sort, setSort] = useState("updated");
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [page, setPage] = useState(1);
+  const [taxonomyOpen, setTaxonomyOpen] = useState(false);
   const requestId = useRef(0);
   const detailRequest = useRef(0);
   const dirty = view === "edit" && JSON.stringify(draft) !== baseline;
@@ -160,8 +162,17 @@ export default function KnowledgeView({ initialDocs, initialCategories, initialT
   return <section className={styles.root}>
     <header className={styles.header}>
       <div className={styles.heading}><span className={styles.brandIcon}><ReadOutlined /></span><div><h1>知识库</h1><p>把工作经验，整理成随时可用的知识。</p></div></div>
-      <Button type="primary" icon={<PlusOutlined />} onClick={() => edit()} disabled={saving || mutating}>新建文档</Button>
+      <div className={styles.actions}>
+        {user?.role === "admin" && <Button icon={<FolderOutlined />} onClick={() => navigate(() => { detailRequest.current++; setView("list"); setTaxonomyOpen(true); })} disabled={saving || mutating}>管理分类和标签</Button>}
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => edit()} disabled={saving || mutating}>新建文档</Button>
+      </div>
     </header>
+    {user?.role === "admin" && <TaxonomyManager open={taxonomyOpen} onClose={() => setTaxonomyOpen(false)} onChanged={(kind, removed) => {
+      setPage(1);
+      if (removed && ((kind === "categories" && filters.category === removed) || (kind === "tags" && filters.tag === removed))) {
+        setFilters((old) => ({ ...old, ...(kind === "categories" ? { category: "all" } : { tag: "" }) }));
+      } else void refresh(filters);
+    }} />}
     <div className={styles.workspace}>
       <aside className={styles.sidebar} aria-label="知识库导航">
         <div className={styles.library}><ReadOutlined /><strong>文档空间</strong><span>{total} 篇</span></div>
@@ -171,7 +182,7 @@ export default function KnowledgeView({ initialDocs, initialCategories, initialT
         </nav>
         <div className={styles.sectionLabel}>标签筛选</div>
         <Select aria-label="按标签筛选" placeholder="选择或搜索标签" showSearch optionFilterProp="label" allowClear value={filters.tag || undefined} onChange={(tag) => filter({ tag: tag ?? "" })} options={tags.map((t) => ({ value: t.name, label: `${t.name} (${t.count})` }))} className={styles.tagSelect} />
-        <div className={styles.sidebarNote}><FileTextOutlined /><p>支持 Markdown 写作<br />分类由管理后台统一维护</p></div>
+        <div className={styles.sidebarNote}><FileTextOutlined /><p>支持 Markdown 写作<br />分类与标签在两端同步</p></div>
       </aside>
       <main className={styles.main}>
         {view === "list" ? <>

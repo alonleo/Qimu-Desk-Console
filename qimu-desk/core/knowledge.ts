@@ -365,7 +365,7 @@ export async function deleteDoc(id: number): Promise<boolean> {
   return info.changes > 0;
 }
 
-/** 分类项（含文档数）。个人工作台只读，分类的新增/重命名/删除由管理后台维护。 */
+/** 分类项（含文档数）。管理员可在工作台或管理台维护共享目录。 */
 export type CategoryItem = { id: number; name: string; count: number };
 
 /** 全部受管分类及当前用户可见的文档计数。 */
@@ -393,8 +393,11 @@ export async function listCategories(user: VisibilityUser = null): Promise<Categ
 /** 标签及计数只统计当前用户可见的文档。 */
 export async function listTags(user: VisibilityUser = null): Promise<{ name: string; count: number }[]> {
   const scope = memberScopeSql(user, "d");
-  const all = await rows<{ tags: string }>(`SELECT tags FROM docs d WHERE 1 = 1 ${scope.clause}`, scope.params);
-  const counter = new Map<string, number>();
+  const [all, managed] = await Promise.all([
+    rows<{ tags: string }>(`SELECT tags FROM docs d WHERE 1 = 1 ${scope.clause}`, scope.params),
+    rows<{ name: string }>("SELECT name FROM knowledge_tags ORDER BY name"),
+  ]);
+  const counter = new Map<string, number>(managed.map((tag) => [tag.name, 0]));
   for (const r of all) {
     for (const t of new Set(parseTags(r.tags))) counter.set(t, (counter.get(t) ?? 0) + 1);
   }

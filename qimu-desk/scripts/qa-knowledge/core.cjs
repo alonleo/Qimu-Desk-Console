@@ -31,10 +31,11 @@ const knowledge = load('core/knowledge.ts', { './db': db, './visibility': visibi
   assert.equal(categories.find((c) => c.name === '未分类').count, 2);
   assert.equal(categories.find((c) => c.name === '指南').count, 0);
   assert.match(calls.at(-2).sql, /d.visibility = 'public' OR d.owner_id = \?/);
-  results = [[{ tags: 'API,API,工作' }, { tags: 'API' }]];
+  results = [[{ tags: 'API,API,工作' }, { tags: 'API' }], [{ name: '空标签' }, { name: 'API' }]];
   const tags = await knowledge.listTags(user);
   assert.equal(tags.find((t) => t.name === 'API').count, 2);
-  assert.ok(calls.at(-1).params.includes(42));
+  assert.ok(calls.at(-2).params.includes(42));
+  assert.equal(tags.find((t) => t.name === '空标签').count, 0);
   assert.equal(visibility.canEditRow(user, { owner_id: 9, visibility: 'public' }), false);
   assert.equal(visibility.canEditRow(user, { owner_id: 42 }), true);
   console.log('PASS: scoped queries, exact tag matching, safe excerpts, category totals and edit permissions');
