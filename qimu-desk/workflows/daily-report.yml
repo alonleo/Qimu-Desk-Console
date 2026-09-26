@@ -1,0 +1,39 @@
+# 工作流：daily-report（每日简报）
+# 演示：shell 步骤 → template 步骤，步骤间变量传递（{{steps.<id>.output}}）
+name: daily-report
+displayName: 每日简报
+description: 取当前系统时间，套模板生成一段简报文案。演示 shell 步骤输出如何流入后续步骤。
+color: "#1677ff"
+params:
+  - name: owner
+    label: 你的名字
+    required: false
+    default: Alon
+    description: 简报的落款人
+steps:
+  - id: today
+    name: 获取当前日期
+    type: shell
+    shell:
+      command: >-
+        node -e "const d=new Date();console.log(d.toISOString().slice(0,10)+' ('+['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()]+')')"
+      timeout: 15
+  - id: env
+    name: 运行环境
+    type: shell
+    shell:
+      command: >-
+        node -e "const os=require('os');console.log(os.platform()+' / node '+process.version)"
+      timeout: 15
+  - id: draft
+    name: 生成简报
+    type: template
+    template:
+      content: |
+        # 每日简报
+
+        - 日期：{{steps.today.output}}
+        - 运行环境：{{steps.env.output}}
+        - 落款：{{owner}}
+
+        以上内容由工作流 daily-report 自动生成。

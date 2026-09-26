@@ -1,0 +1,32 @@
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant V as AIView(chat)
+    participant C as /api/ai/chat
+    participant P as core/ai/prompts.ts
+    participant X as core/ai/artifacts.ts
+    participant W as /api/skills|workflows|knowledge
+    participant DB as MySQL qimu_platform
+    participant T as 技能/工作流/知识库
+
+    U->>V: 输入"创建 fetch-stats 技能"
+    V->>C: POST {messages, useKnowledge, autoSave:false, gatewayId}
+    C->>P: 拼接 ARTIFACT_SYSTEM_PROMPT
+    C->>X: chatLlm 返回正文(可能含 <artifacts>)
+    X-->>C: { reply, drafts[], skipped }
+    C-->>V: { ok, reply, drafts, usedDocs, gatewayId }
+    V->>V: 气泡下渲染 DraftCard
+    U->>V: 编辑/确认后点「保存到技能中心」
+    V->>W: POST /api/skills {…draft, source:'ai'}
+    W->>W: createSkill：校验→查重→INSERT(source='ai')
+    alt 重名
+        W-->>V: 409 {code:NAME_CONFLICT, existing}
+        V->>V: 卡片进入冲突态（覆盖/另存/放弃）
+    else 成功
+        W->>DB: INSERT skills
+        W-->>V: 200 {ok, skill:{id,…}}
+        V->>V: 卡片→已保存态 ✓ #id
+    end
+    U->>T: 进入技能中心(刷新)
+    T->>DB: listSkills(SELECT 含 source)
+    DB-->>T: 含 source='ai' 条目 → SourceTag「AI 生成」

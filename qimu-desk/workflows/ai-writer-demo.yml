@@ -1,0 +1,31 @@
+# 工作流：ai-writer-demo（AI 写作演示）
+# 演示：llm 步骤——渲染提示词后调用已配置的 AI 网关（OpenAI 兼容接口）
+name: ai-writer-demo
+displayName: AI 写作演示
+description: 演示 llm 步骤的编排方式。运行前请先在「AI 助手 → 网关设置」中配置并启用 AI 网关。
+color: "#fa8c16"
+params:
+  - name: topic
+    label: 写作主题
+    required: true
+    description: 想让 AI 写点什么
+steps:
+  - id: outline
+    name: 拟定大纲
+    type: llm
+    llm:
+      prompt: |
+        请为主题「{{topic}}」拟一份三段式大纲：
+        1. 开头引入
+        2. 核心论述（3 个要点）
+        3. 结尾升华
+  - id: polish
+    name: 汇总草稿
+    type: template
+    template:
+      content: |
+        # 关于「{{topic}}」的草稿
+
+        {{steps.outline.output}}
+
+        —— 以上大纲由 AI 网关生成。

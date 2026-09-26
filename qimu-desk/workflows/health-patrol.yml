@@ -1,0 +1,31 @@
+# 工作流：health-patrol（健康巡检）
+# 演示：http 步骤（相对路径自动补全为本站地址）→ llm 步骤占位 → template 汇总
+name: health-patrol
+displayName: 工作台健康巡检
+description: 调用本机健康检查 API，输出巡检摘要。http 步骤的相对 URL 会自动指向当前站点。
+color: "#13c2c2"
+steps:
+  - id: health
+    name: 调用健康检查接口
+    type: http
+    http:
+      method: GET
+      url: /api/health
+      timeout: 10
+  - id: node
+    name: Node 进程信息
+    type: shell
+    shell:
+      command: node -e "console.log('node '+process.version+', pid '+process.pid)"
+      timeout: 10
+  - id: report
+    name: 巡检汇总
+    type: template
+    template:
+      content: |
+        # 巡检报告
+
+        - 健康检查：{{steps.health.output}}
+        - 进程信息：{{steps.node.output}}
+
+        状态正常。

@@ -1,0 +1,36 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+jar.txt
+captcha*
+*.session*
+.local/
+# Dependencies and generated output
+node_modules/
+.next/
+.next.bak*/
+next-env.d.ts
+*.tsbuildinfo
+target/
+out/
+dist/
+build/
+*.log
+# Private runtime data and legacy deployment artifacts
+data/
+migration-data/
+.wb-deploy/
+.workbuddy/
+deploy-logs/
+deploy-bundles/
+.claude/
+.codex/
+.agents/
+.DS_Store

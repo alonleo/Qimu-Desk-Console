@@ -1,0 +1,25 @@
+node_modules/
+.next/
+.next.bak*/
+out/
+data/
+.env
+.env.local
+*.log
+.DS_Store
+next-env.d.ts
+*.tsbuildinfo
+# 敏感临时文件
+*.session*
+panel_session.txt
+.tmp_*
+.tmp_panel_login.js
+!tmp_ensure_scheduled_tasks.mjs
+deploy-bundles/
+deploy-logs/
+deploy/
+deploy/staging/
+deploy/out/
+deploy/tmp/
+.wb-deploy/
+.workbuddy/

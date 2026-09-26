@@ -1,0 +1,58 @@
+name: security-advisories-collector
+displayName: 安全漏洞收集器
+description: 收集近 N 天内的 NVD 与 OSV 安全漏洞并汇总分析（可用于验证工作流执行能力）
+params:
+  - name: days
+    label: 收集天数
+    required: true
+    default: "7"
+  - name: pkg
+    label: OSV 查询的包名（如 lodash）
+    required: false
+    default: "lodash"
+steps:
+  - id: start_date
+    name: 计算起始时间
+    type: shell
+    shell:
+      command: "date -u -d '{{days}} days ago' +%Y-%m-%dT%H:%M:%SZ"
+      timeout: 15
+  - id: end_date
+    name: 计算结束时间
+    type: shell
+    shell:
+      command: "date -u +%Y-%m-%dT%H:%M:%SZ"
+      timeout: 15
+  - id: nvd_url
+    name: 构造 NVD 查询 URL
+    type: template
+    template:
+      content: "https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate={{steps.start_date.output}}&pubEndDate={{steps.end_date.output}}&resultsPerPage=20"
+  - id: fetch_nvd
+    name: 查询 NVD
+    type: http
+    http:
+      method: GET
+      url: "{{steps.nvd_url.output}}"
+      timeout: 30
+  - id: fetch_osv
+    name: 查询 OSV
+    type: http
+    http:
+      method: POST
+      url: "https://api.osv.dev/v1/query"
+      headers:
+        Content-Type: "application/json"
+      body: "{\"package\":{\"name\":\"{{pkg}}\",\"ecosystem\":\"npm\"}}"
+      timeout: 30
+  - id: summarize
+    name: 聚合分析
+    type: llm
+    llm:
+      prompt: |
+        你是安全分析师。以下是近 {{days}} 天（{{steps.start_date.output}} ~ {{steps.end_date.output}}）的漏洞原始数据。
+        【NVD 响应】
+        {{steps.fetch_nvd.output}}
+        【OSV 响应（包 {{pkg}}）】
+        {{steps.fetch_osv.output}}
+        请汇总：高危漏洞数量、主要受影响的组件、建议的处置优先级（不超过 300 字）。

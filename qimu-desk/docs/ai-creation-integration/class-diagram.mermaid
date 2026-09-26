@@ -1,0 +1,144 @@
+classDiagram
+    direction LR
+
+    class ChatDraft {
+        +string key
+        +ArtifactKind kind
+        +SkillDraft | WorkflowDraft | KnowledgeDraft payload
+        +string[] issues?
+    }
+
+    class SaveResult {
+        <<union>>
+        +boolean ok
+        +int id
+        +boolean created
+        +string message
+        +string status "duplicate|invalid|error"
+        +existing?
+    }
+
+    class ArtifactKind {
+        <<enum>>
+        skill
+        workflow
+        knowledge
+    }
+
+    class SourceValue {
+        <<enum>>
+        manual
+        file
+        ai
+    }
+
+    class extractArtifacts {
+        +extractArtifacts(content) RawArtifact[]
+    }
+
+    class normalizeDraft {
+        +normalizeDraft(raw) { draft? } | { skipped }
+    }
+
+    class writeArtifact {
+        +writeArtifact(kind, payload, opts) SaveResult
+    }
+
+    class ARTIFACT_SYSTEM_PROMPT {
+        +string content
+    }
+
+    class createSkill {
+        +createSkill(input, opts) SaveResult
+    }
+
+    class createWorkflow {
+        +createWorkflow(input, opts) SaveResult
+    }
+
+    class createDoc {
+        +createDoc(input, username, opts) DocRecord
+    }
+
+    class ensureSourceColumns {
+        +ensureSourceColumns() boolean
+    }
+
+    class withColumnFallback {
+        +withColumnFallback(sqlWith, sqlLegacy) T[]
+    }
+
+    class DraftCard {
+        +ChatDraft draft
+        +SaveResult initialSaveResult?
+        +render()
+    }
+
+    class AIView {
+        +ChatItem[] chat
+        +boolean autoSave
+        +send()
+    }
+
+    class SourceTag {
+        +string source
+        +render()
+    }
+
+    class SkillRecord {
+        +int id
+        +string name
+        +SkillType type
+        +string source "来源标识"
+        +string sourceText "原始 YAML 文本"
+    }
+
+    class WorkflowRecord {
+        +int id
+        +string name
+        +string source
+        +string sourceText
+    }
+
+    class DocRecord {
+        +int id
+        +string title
+        +string source
+    }
+
+    class SkillController {
+        +create(body) Map
+    }
+
+    class WorkflowController {
+        +create(body) Map
+    }
+
+    class KnowledgeController {
+        +list() Map
+    }
+
+    class SourceColumnMigrator {
+        +run()
+    }
+
+    AIView --> ChatDraft
+    AIView --> DraftCard
+    DraftCard --> SaveResult
+    DraftCard --> writeArtifact
+    writeArtifact --> createSkill
+    writeArtifact --> createWorkflow
+    writeArtifact --> createDoc
+    extractArtifacts ..> normalizeDraft
+    normalizeDraft ..> ChatDraft
+    ARTIFACT_SYSTEM_PROMPT ..> extractArtifacts
+    SkillRecord --> SourceValue
+    WorkflowRecord --> SourceValue
+    DocRecord --> SourceValue
+    SkillController --> SkillRecord
+    WorkflowController --> WorkflowRecord
+    KnowledgeController --> DocRecord
+    SourceColumnMigrator --> ensureSourceColumns
+    createSkill ..> SkillRecord
+    createWorkflow ..> WorkflowRecord
+    createDoc ..> DocRecord

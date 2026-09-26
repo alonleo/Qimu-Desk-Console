@@ -1,0 +1,16 @@
+# 技能：workbench-health（http 类型示例）
+name: workbench-health
+displayName: 工作台健康检查
+description: 调用工作台自身的健康检查接口，验证服务存活状态（HTTP 技能示例）。
+type: http
+color: "#13c2c2"
+params:
+  - name: baseUrl
+    label: 服务地址
+    required: false
+    default: http://localhost:3000
+    description: 工作台基础地址，默认本机
+http:
+  method: GET
+  url: "{{baseUrl}}/api/health"
+  timeout: 10

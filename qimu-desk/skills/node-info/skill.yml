@@ -1,0 +1,9 @@
+# 技能：node-info（shell 类型示例）
+name: node-info
+displayName: 运行环境检查
+description: 输出当前运行环境的 Node 版本、平台与 CPU 架构，用于环境巡检。
+type: shell
+color: "#1677ff"
+shell:
+  command: node -v && node -p process.platform && node -p process.arch
+  timeout: 15

@@ -1,0 +1,31 @@
+# 工作流：skill-chain（技能串联）
+# 演示：skill 步骤复用技能中心已注册的技能，输出继续流转到 template
+name: skill-chain
+displayName: 技能串联演示
+description: 先调用技能中心的「打个招呼」技能，再把它的输出嵌进模板。工作流是技能的编排层。
+color: "#722ed1"
+params:
+  - name: name
+    label: 问候对象
+    required: false
+    default: World
+steps:
+  - id: greet
+    name: 调用 hello 技能
+    type: skill
+    skill:
+      name: hello
+      params:
+        name: "{{name}}"
+  - id: summary
+    name: 汇总输出
+    type: template
+    template:
+      content: |
+        # 技能串联结果
+
+        hello 技能返回：
+
+        > {{steps.greet.output}}
+
+        —— 这条链路证明：工作流步骤可以复用技能中心注册的任意技能。

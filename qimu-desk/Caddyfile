@@ -1,0 +1,14 @@
+# 把 workbench.example.com 替换为你的真实域名
+# Caddy 会自动申请并续期 Let's Encrypt 证书
+workbench.example.com {
+	encode gzip zstd
+
+	reverse_proxy app:3000
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

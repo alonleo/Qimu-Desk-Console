@@ -1,0 +1,11 @@
+{
+  "name": "qimu-desk-console",
+  "private": true,
+  "scripts": {
+    "dev:desk": "npm --prefix qimu-desk run dev",
+    "dev:console": "npm --prefix qimu-console run dev",
+    "build:desk": "npm --prefix qimu-desk run build",
+    "build:console": "npm --prefix qimu-console run build",
+    "check:preview": "cd qimu-desk && node scripts/check-local-preview.mjs && cd ../qimu-console && node scripts/check-local-preview.mjs"
+  }
+}

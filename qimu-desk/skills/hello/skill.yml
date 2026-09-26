@@ -1,0 +1,15 @@
+# 技能：hello（shell 类型示例）
+name: hello
+displayName: 打个招呼
+description: 最简单的 shell 技能：向指定对象问好，用于验证技能执行链路是否通畅。
+type: shell
+color: "#52c41a"
+params:
+  - name: name
+    label: 名字
+    required: false
+    default: World
+    description: 要问候的对象
+shell:
+  command: echo Hello, {{name}}! This message comes from the skill runner.
+  timeout: 10

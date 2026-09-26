@@ -1,0 +1,67 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: admin-backend
+  datasource:
+    # 生产务必通过环境变量注入 DB_HOST / DB_PORT / DB_NAME / DB_USERNAME / DB_PASSWORD
+    # （本地开发保持默认 root + 空密码即可直连本机 MySQL）
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:qimu_platform}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    druid:
+      # 数据监控（Druid 控制台 /druid/*）：默认 admin/admin，生产务必用 DRUID_USERNAME / DRUID_PASSWORD 覆盖
+      stat-view-servlet:
+        enabled: true
+        url-pattern: /druid/*
+        login-username: ${DRUID_USERNAME:admin}
+        login-password: ${DRUID_PASSWORD:admin}
+      web-stat-filter:
+        enabled: true
+        url-pattern: /*
+      filter:
+        stat:
+          enabled: true
+          log-slow-sql: true
+          slow-sql-millis: 1000
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+app:
+  jwt:
+    # 生产环境务必通过环境变量 JWT_SECRET 注入（≥32 位随机串，与 alon-workbench 保持一致）。
+    # 下方默认值仅用于本地开发；当 APP_ENV 为 production/prod 时若仍使用默认值，JwtUtil 会拒绝启动。
+    secret: ${JWT_SECRET:alon-workbench-dev-only-secret-0123456789abcdef}
+    expire-hours: 72
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3010,http://127.0.0.1:3010,http://localhost:3011,http://127.0.0.1:3011}
+  # 运行环境标记：本地开发可不设置（默认 development）。
+  # 部署到生产请设置 APP_ENV=production —— 该模式下 JWT_SECRET 未配置/仍是开发默认值时后端将拒绝启动。
+  env: ${APP_ENV:development}
+  # SQLite → MySQL 一次性迁移（默认关闭；需要时 MIGRATE_ENABLED=true + MIGRATE_SQLITE=/path/to/data.db）
+  migration:
+    sqlite-path: ${MIGRATE_SQLITE:}
+    enabled: ${MIGRATE_ENABLED:false}
+    # 迁移用户的初始密码：优先读环境变量；未设置时按用户生成随机一次性凭据（见 SqliteMigrator）
+    default-password: ${MIGRATE_DEFAULT_PASSWORD:}
+
+logging:
+  level:
+    com.alon.admin: info

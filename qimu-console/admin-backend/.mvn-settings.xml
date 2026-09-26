@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 本地构建用：规避全局 settings 中失效的 uu898 镜像（HTTP 502）与旧版 aliyun 路径（301），
+     统一走 Aliyun 现代 HTTPS 仓库。用法：mvn -s .mvn-settings.xml ... -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <localRepository>C:\maven\repositories</localRepository>
+  <mirrors>
+    <mirror>
+      <id>aliyun-modern</id>
+      <name>aliyun-modern</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+      <mirrorOf>*</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>

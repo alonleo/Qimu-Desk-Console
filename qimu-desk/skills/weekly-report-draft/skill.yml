@@ -1,0 +1,27 @@
+# 技能：weekly-report-draft（prompt 类型示例）
+name: weekly-report-draft
+displayName: 周报草稿生成
+description: 按模板渲染本周完成与下周计划，生成周报草稿。接入 AI 后（M6）将自动成文。
+type: prompt
+color: "#722ed1"
+params:
+  - name: done
+    label: 本周完成
+    required: true
+    multiline: true
+    description: 本周完成的事项，每行一条
+  - name: plan
+    label: 下周计划
+    required: false
+    default: 待补充
+    multiline: true
+    description: 下周的计划事项，每行一条
+prompt:
+  template: |
+    # 周报草稿
+
+    ## 本周完成
+    {{done}}
+
+    ## 下周计划
+    {{plan}}
