@@ -149,13 +149,13 @@ function parseArtifactList(text: string): unknown[] | null {
 }
 
 /** 在原文中找最后一个 ```json / ``` 代码块 */
-function lastFenceBlock(content: string): { start: number; text: string } | null {
+function lastFenceBlock(content: string): { start: number; end: number; text: string } | null {
   const re = /```(?:json)?\s*([\s\S]*?)```/gi;
   let last: RegExpExecArray | null = null;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content)) !== null) last = m;
   if (!last || last.index < 0) return null;
-  return { start: last.index, text: last[1] };
+  return { start: last.index, end: last.index + last[0].length, text: last[1] };
 }
 
 /** 逐条归一化产物数组，返回 drafts（已分配 key）与 skipped（人话原因） */
@@ -191,8 +191,8 @@ export function extractArtifacts(content: string): ExtractResult {
   if (tagStart >= 0 && tagEndRel > tagStart) {
     const inner = src.slice(tagStart + "<artifacts>".length, tagEndRel);
     const list = parseArtifactList(inner);
-    const reply = src.slice(0, tagStart).trim() || src.trim();
-    if (!list) return { reply, drafts: [], skipped: [] };
+    const reply = (src.slice(0, tagStart) + src.slice(tagEndRel + "</artifacts>".length)).trim();
+    if (!list) return { reply: src.trim(), drafts: [], skipped: [] };
     const { drafts, skipped } = collectDrafts(list);
     // 有产物意图但全部项被丢弃时，在回复里给出人话说明（§3.2 回落纯文本）
     if (drafts.length === 0 && skipped.length > 0) {
@@ -214,7 +214,7 @@ export function extractArtifacts(content: string): ExtractResult {
     if (list) {
       const { drafts, skipped } = collectDrafts(list);
       if (drafts.length > 0) {
-        const reply = src.slice(0, fence.start).trim() || src.trim();
+        const reply = (src.slice(0, fence.start) + src.slice(fence.end)).trim();
         return { reply, drafts, skipped };
       }
     }

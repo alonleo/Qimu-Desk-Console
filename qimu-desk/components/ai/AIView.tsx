@@ -829,11 +829,15 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         const rawContent = finalReply ?? (raw.trim() ? raw.trim() : null);
         if (rawContent || meta.drafts?.length || toolRuns.length) {
           // 仅保存可展示正文；草稿独立保留，避免仅含产物时丢失操作卡片。
-          const cleaned = stripThink(stripArtifactRegion(rawContent || ""));
-          const content = cleaned || (meta.drafts?.length ? "已生成草稿，请查看下方内容。" : aborted ? "已停止生成。已完成的工具操作不会撤销。" : err || "生成已结束，未返回可显示的回答。");
+          const cleaned = stripThink(stripArtifactRegion(rawContent || "")).trim();
+          const emptyError = /<think>/i.test(rawContent || "")
+            ? "模型仅返回了思考内容，未生成正式回答。请重试、缩短问题或切换模型。"
+            : "AI 未返回有效正文，请重试或切换模型。";
+          const content = cleaned || (meta.drafts?.length ? "已生成草稿，请查看下方内容。" : aborted ? "已停止生成。已完成的工具操作不会撤销。" : err || emptyError);
           const item: ChatItem = {
             role: "assistant",
             content,
+            error: !aborted && !meta.drafts?.length && (!cleaned || !!err) ? true : undefined,
             usedDocs: meta.usedDocs,
             drafts: meta.drafts,
             saveResults: meta.saveResults,

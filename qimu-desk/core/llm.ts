@@ -206,10 +206,11 @@ export async function chatLlm(opts: {
       return { ok: false, error: `AI 网关返回 HTTP ${res.status}：${body || res.statusText}` };
     }
     const data = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
       error?: { message?: string };
     };
     if (data.error?.message) return { ok: false, error: `AI 网关错误：${data.error.message}` };
+    if (data.choices?.[0]?.finish_reason === "length") return { ok: false, error: "模型输出达到长度上限，回答未完成。请缩短问题或切换模型后重试。" };
     const content = data.choices?.[0]?.message?.content ?? "";
     if (!content) return { ok: false, error: "AI 网关返回了空内容（choices 为空）" };
     return { ok: true, content };
@@ -259,6 +260,7 @@ export async function chatLlmStream(opts: {
   const timer = setTimeout(() => controller.abort(), 120_000);
 
   let content = "";
+  let finishReason: string | undefined;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -282,8 +284,9 @@ export async function chatLlmStream(opts: {
     // Some compatible gateways ignore stream=true and return JSON. Consume that
     // response directly, without replaying the request (which may have side effects).
     if (res.headers.get("content-type")?.includes("application/json")) {
-      const data = await res.json() as { choices?: { message?: { content?: string } }[]; error?: { message?: string } };
+      const data = await res.json() as { choices?: { message?: { content?: string }; finish_reason?: string }[]; error?: { message?: string } };
       if (data.error?.message) return { ok: false, error: `AI 网关错误：${data.error.message}` };
+      if (data.choices?.[0]?.finish_reason === "length") return { ok: false, error: "模型输出达到长度上限，回答未完成。请缩短问题或切换模型后重试。" };
       const reply = data.choices?.[0]?.message?.content;
       if (!reply) return { ok: false, error: "AI 网关返回了空内容" };
       opts.onDelta(reply);
@@ -306,10 +309,11 @@ export async function chatLlmStream(opts: {
         if (!payload || payload === "[DONE]") continue;
         try {
           const j = JSON.parse(payload) as {
-            choices?: { delta?: { content?: string | null } }[];
+            choices?: { delta?: { content?: string | null }; finish_reason?: string | null }[];
             error?: { message?: string };
           };
           if (j.error?.message) return { ok: false, error: `AI 网关错误：${j.error.message}` };
+          if (j.choices?.[0]?.finish_reason) finishReason = j.choices[0].finish_reason;
           const d = j.choices?.[0]?.delta?.content;
           if (d) {
             content += d;
@@ -325,7 +329,8 @@ export async function chatLlmStream(opts: {
       }
       if (done) break;
     }
-    if (!content) return { ok: false, error: "AI 网关返回了空内容（未按流式格式输出）" };
+    if (finishReason === "length") return { ok: false, error: "模型输出达到长度上限，回答未完成。请缩短问题或切换模型后重试。" };
+    if (!content.trim()) return { ok: false, error: "AI 网关未返回回答正文（可能仅返回了推理内容），请重试或切换模型" };
     return { ok: true, content };
   } catch (err) {
     const aborted = controller.signal.aborted;

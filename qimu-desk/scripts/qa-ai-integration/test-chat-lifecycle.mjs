@@ -16,13 +16,15 @@ function harness(fetch) {
     setLiveToolRuns: () => {},
     setStreaming: (value) => { state.streaming = value; },
     commitItems: (convId, items) => state.commits.push({ convId, items }),
-    stripThink: (s) => s, stripArtifactRegion: (s) => s,
+
     appMessage: { warning: (s) => state.warnings.push(s) },
     requestAnimationFrame: (fn) => { frames.set(++id, fn); return id; },
     cancelAnimationFrame: (key) => frames.delete(key),
   };
   context.abortCurrentStream = () => { context.abortRef.current?.abort(); context.finishStreamRef.current?.(); };
   vm.createContext(context);
+  const filters = source.slice(source.indexOf('function stripArtifactRegion'), source.indexOf('// 居中列容器样式'));
+  vm.runInContext(ts.transpileModule(filters, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   vm.runInContext(ts.transpileModule(`globalThis.run = ${callback}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   return { context, state, flush() { for (let i = 0; frames.size && i < 1000; i++) { const batch = [...frames.values()]; frames.clear(); batch.forEach((f) => f()); } assert.equal(frames.size, 0); } };
 }
@@ -78,3 +80,11 @@ let count = 0;
   assert.equal(h.state.commits[0].items.at(-1).toolRuns[0].output, 'saved', 'completed tool results survive final model failure');
 }
 console.log('PASS: HTTP errors, EOF, truncated stream, stop, stale response isolation, context filtering');
+
+{
+  const h = harness(async () => sse('data: ' + JSON.stringify({ type: 'done', reply: '<think>仍在推理</think>' }) + '\n\n'));
+  await h.context.run('a', user); h.flush();
+  const answer = h.state.commits[0].items.at(-1);
+  assert.equal(answer.error, true, 'reasoning-only output must not be stored as a successful answer');
+  assert.match(answer.content, /思考/);
+}

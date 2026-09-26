@@ -30,3 +30,14 @@ async function run(response, timeout = false) {
   assert.equal(result.ok, false); assert.equal(result.aborted, false, 'timeouts must reach the user as errors');
 }
 console.log('PASS: JSON compatibility without replay, SSE EOF, timeout classification');
+
+for (const content of ['<think>未完成的推理', '部分正文']) {
+  const { result, calls } = await run(new Response('data: ' + JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'length' }] }) + '\n\ndata: [DONE]\n\n'));
+  assert.equal(result.ok, false, 'length-limited generation must report truncation');
+  assert.match(result.error, /长度/);
+  assert.equal(calls, 1);
+}
+{
+  const { result } = await run(Response.json({ choices: [{ message: { content: '' }, finish_reason: 'length' }] }));
+  assert.match(result.error, /长度/);
+}
