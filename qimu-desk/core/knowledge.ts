@@ -4,6 +4,7 @@ import {
   memberScopeSql,
   normalizeVisibility,
   type VisibilityValue,
+  type VisibilityUser,
 } from "./visibility";
 
 /**
@@ -98,7 +99,7 @@ function highlightExcerpt(content: string, kw: string, max = 140): string {
   const lower = plain.toLowerCase();
   const nl = needle.toLowerCase();
   const idx = lower.indexOf(nl);
-  if (idx === -1) return plainExcerpt(plain, max);
+  if (idx === -1) return escapeHtml(plainExcerpt(plain, max));
 
   let start = Math.max(0, idx - Math.floor(max / 2));
   let end = Math.min(plain.length, start + max);
@@ -178,8 +179,8 @@ export async function listDocs(opts: {
     params.push(opts.category);
   }
   if (opts.tag) {
-    conds.push("tags LIKE ?");
-    params.push(`%${escapeLike(opts.tag)}%`);
+    conds.push("FIND_IN_SET(?, tags) > 0");
+    params.push(opts.tag);
   }
   if (opts.mine === "1" && opts.user) {
     conds.push("owner_id = ?");
@@ -367,23 +368,35 @@ export async function deleteDoc(id: number): Promise<boolean> {
 /** 分类项（含文档数）。个人工作台只读，分类的新增/重命名/删除由管理后台维护。 */
 export type CategoryItem = { id: number; name: string; count: number };
 
-/** 全部分类及计数（LEFT JOIN docs 统计） */
-export async function listCategories(): Promise<CategoryItem[]> {
-  return rows<CategoryItem>(`
-    SELECT c.id, c.name, COUNT(d.id) AS count
-    FROM categories c
-    LEFT JOIN docs d ON d.category = c.name
-    GROUP BY c.id, c.name
-    ORDER BY c.name
-  `);
+/** 全部受管分类及当前用户可见的文档计数。 */
+export async function listCategories(user: VisibilityUser = null): Promise<CategoryItem[]> {
+  const scope = memberScopeSql(user, "d");
+  const [visible, all] = await Promise.all([
+    rows<{ name: string; count: number }>(`
+      SELECT d.category AS name, COUNT(*) AS count
+      FROM docs d
+      WHERE 1 = 1 ${scope.clause}
+      GROUP BY d.category
+      ORDER BY d.category
+    `, scope.params),
+    rows<{ id: number; name: string }>("SELECT id, name FROM categories ORDER BY name"),
+  ]);
+  // 保留空分类供新建选择，同时补齐历史文档中尚未登记的分类。
+  const counts = new Map(visible.map((c) => [c.name, Number(c.count)]));
+  const managed = new Set(all.map((c) => c.name));
+  return [
+    ...all.map((c) => ({ ...c, count: counts.get(c.name) ?? 0 })),
+    ...visible.filter((c) => !managed.has(c.name)).map((c, i) => ({ ...c, id: -i - 2, count: Number(c.count) })),
+  ];
 }
 
-/** 全部标签及计数（用于标签过滤与输入建议） */
-export async function listTags(): Promise<{ name: string; count: number }[]> {
-  const all = await rows<{ tags: string }>("SELECT tags FROM docs");
+/** 标签及计数只统计当前用户可见的文档。 */
+export async function listTags(user: VisibilityUser = null): Promise<{ name: string; count: number }[]> {
+  const scope = memberScopeSql(user, "d");
+  const all = await rows<{ tags: string }>(`SELECT tags FROM docs d WHERE 1 = 1 ${scope.clause}`, scope.params);
   const counter = new Map<string, number>();
   for (const r of all) {
-    for (const t of parseTags(r.tags)) counter.set(t, (counter.get(t) ?? 0) + 1);
+    for (const t of new Set(parseTags(r.tags))) counter.set(t, (counter.get(t) ?? 0) + 1);
   }
   return [...counter.entries()]
     .map(([name, count]) => ({ name, count }))

@@ -1,614 +1,224 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  App,
-  Avatar,
-  Button,
-  Card,
-  Col,
-  Empty,
-  Input,
-  Popconfirm,
-  Row,
-  Select,
-  Segmented,
-  Space,
-  Spin,
-  Tag,
-  Typography,
-} from "antd";
-import {
-  ArrowLeftOutlined,
-  DeleteOutlined,
-  EditOutlined,
-  PlusOutlined,
-  PushpinFilled,
-  ReadOutlined,
-  SaveOutlined,
-  SearchOutlined,
-} from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, App, Button, Empty, Input, Pagination, Popconfirm, Segmented, Select, Spin, Tag } from "antd";
+import { ArrowLeftOutlined, AppstoreOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, FileTextOutlined, FolderOutlined, PlusOutlined, PushpinFilled, ReadOutlined, ReloadOutlined, SaveOutlined, SearchOutlined, UnorderedListOutlined } from "@ant-design/icons";
+import dynamic from "next/dynamic";
 import type { DocListItem, DocRecord } from "@/core/knowledge";
+import { canEditRow, defaultVisibility, type VisibilityUser, type VisibilityValue } from "@/core/visibility";
 import SourceTag from "@/components/SourceTag";
 import VisibilityTag from "@/components/VisibilityTag";
-import dynamic from "next/dynamic";
+import VisibilitySelect from "@/components/VisibilitySelect";
+import styles from "./knowledge.module.css";
 
-/** 知识库文档正文 Markdown（懒加载：react-markdown/remark 仅在使用时进入客户端 chunk） */
-const DocMarkdown = dynamic(() => import("@/components/knowledge/DocMarkdownBody"), {
-  ssr: false,
-  loading: () => (
-    <div style={{ color: "rgba(0,0,0,0.45)", fontSize: 13, padding: "12px 0" }}>加载文档渲染…</div>
-  ),
-});
-
-const MODULE_COLOR = "#1677ff";
-
-const CATEGORY_COLORS = ["#1677ff", "#0ea5e9", "#13c2c2", "#52c41a", "#fa8c16", "#eb2f96", "#f5222d", "#2f54eb"];
-const TAG_COLORS = ["blue", "purple", "cyan", "green", "orange", "magenta", "geekblue", "gold"];
-
-function categoryColor(name: string): string {
-  let h = 0;
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 997;
-  return CATEGORY_COLORS[h % CATEGORY_COLORS.length];
-}
-
-function tagColor(name: string): string {
-  let h = 0;
-  for (const ch of name) h = (h * 37 + ch.charCodeAt(0)) % 997;
-  return TAG_COLORS[h % TAG_COLORS.length];
-}
-
-function gradient(color: string): string {
-  return color;
-}
-
-/** 时间展示：MySQL 以本地时（Asia/Shanghai）存文本，直接按文本截取，不做时区换算 */
-function fmtTime(s?: string | null): string {
-  if (!s) return "-";
-  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(s);
-  if (!m) return s;
-  return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
-}
-
-/** snippet 里 <em>…</em> 高亮标记解析渲染（不 dangerouslySetInnerHTML，避免注入） */
-function Highlighted({ text }: { text: string }) {
-  const parts = text.split(/(<em>[\s\S]*?<\/em>)/g);
-  return (
-    <>
-      {parts.map((p, i) => {
-        if (p.startsWith("<em>") && p.endsWith("</em>")) {
-          return (
-            <mark key={i} style={{ background: "#e6f4ff", color: "#0958d9", padding: "0 2px", borderRadius: 3 }}>
-              {p.slice(5, -6)}
-            </mark>
-          );
-        }
-        return <span key={i}>{p}</span>;
-      })}
-    </>
-  );
-}
-
+const DocMarkdown = dynamic(() => import("./DocMarkdownBody"), { ssr: false, loading: () => <p>正在加载正文…</p> });
 type CategoryItem = { id: number; name: string; count: number };
 type TagItem = { name: string; count: number };
-type ViewMode = "list" | "detail" | "edit";
-
-/** 解析标签输入：中文/英文逗号、分号、空格、换行均可分隔 */
-function parseTags(raw: string): string[] {
-  return Array.from(
-    new Set(
-      raw
-        .split(/[,，;；\s\n]+/)
-        .map((t) => t.trim())
-        .filter(Boolean)
-    )
-  ).slice(0, 10);
+type Filters = { q: string; category: string; tag: string; mine: string };
+type Draft = { title: string; category: string; tags: string[]; content: string; visibility: VisibilityValue };
+const emptyFilters: Filters = { q: "", category: "all", tag: "", mine: "all" };
+const dateLabel = (s: string) => s.replace("T", " ").slice(0, 16);
+const decode = (s: string) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, key: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[key]!);
+function Excerpt({ text, searched }: { text: string; searched: boolean }) {
+  if (!searched) return <>{text}</>;
+  return <>{text.split(/(<em>[\s\S]*?<\/em>)/g).map((part, i) => part.startsWith("<em>") && part.endsWith("</em>") ? <mark key={i}>{decode(part.slice(4, -5))}</mark> : <span key={i}>{decode(part)}</span>)}</>;
 }
 
-export default function KnowledgeView({
-  initialDocs,
-  initialCategories,
-  initialTags,
-}: {
-  initialDocs: DocListItem[];
-  initialCategories: CategoryItem[];
-  initialTags: TagItem[];
+export default function KnowledgeView({ initialDocs, initialCategories, initialTags, user }: {
+  initialDocs: DocListItem[]; initialCategories: CategoryItem[]; initialTags: TagItem[]; user: VisibilityUser;
 }) {
-  const { message } = App.useApp();
-  const [docs, setDocs] = useState<DocListItem[]>(initialDocs);
-  const [categories, setCategories] = useState<CategoryItem[]>(initialCategories);
-  const [keyword, setKeyword] = useState("");
-  const [category, setCategory] = useState("all");
+  const { message, modal } = App.useApp();
+  const [docs, setDocs] = useState(initialDocs);
+  const [categories, setCategories] = useState(initialCategories);
+  const [tags, setTags] = useState(initialTags);
+  const [filters, setFilters] = useState(emptyFilters);
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // 视图状态：list 列表 / detail 阅读 / edit 编辑
-  const [view, setView] = useState<ViewMode>("list");
+  const [error, setError] = useState("");
+  const [view, setView] = useState<"list" | "detail" | "edit">("list");
   const [detail, setDetail] = useState<DocRecord | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-
-  // 编辑（全页视图，非弹窗）
+  const [detailError, setDetailError] = useState("");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [eTitle, setETitle] = useState("");
-  const [eCategory, setECategory] = useState<string | undefined>(undefined);
-  const [eTagsRaw, setETagsRaw] = useState("");
-  const [eContent, setEContent] = useState("");
-  const [ePane, setEPane] = useState<"write" | "preview">("write");
+  const [draft, setDraft] = useState<Draft>({ title: "", category: "未分类", tags: [], content: "", visibility: defaultVisibility(user) });
+  const [baseline, setBaseline] = useState("");
+  const [pane, setPane] = useState("split");
   const [saving, setSaving] = useState(false);
+  const [mutating, setMutating] = useState(false);
+  const [layout, setLayout] = useState("list");
+  const [sort, setSort] = useState("updated");
+  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [page, setPage] = useState(1);
+  const requestId = useRef(0);
+  const detailRequest = useRef(0);
+  const dirty = view === "edit" && JSON.stringify(draft) !== baseline;
+  const total = categories.reduce((sum, c) => sum + Number(c.count), 0);
 
-  const totalCount = useMemo(() => categories.reduce((s, c) => s + c.count, 0), [categories]);
-  const eTags = useMemo(() => parseTags(eTagsRaw), [eTagsRaw]);
-
-  /** 统一刷新列表（带当前关键词与分类过滤） */
-  async function refreshList(kw = keyword, cat = category) {
+  const refresh = useCallback(async (active: Filters) => {
+    const seq = ++requestId.current;
     setLoading(true);
+    setError("");
     try {
-      const params = new URLSearchParams();
-      if (kw.trim()) params.set("q", kw.trim());
-      if (cat !== "all") params.set("category", cat);
-      const res = await fetch(`/api/knowledge?${params.toString()}`);
+      const params = new URLSearchParams({ limit: "500" });
+      if (active.q) params.set("q", active.q);
+      if (active.category !== "all") params.set("category", active.category);
+      if (active.tag) params.set("tag", active.tag);
+      if (active.mine !== "all") params.set("mine", active.mine);
+      const res = await fetch(`/api/knowledge?${params}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "加载失败");
-      setDocs(data.docs || []);
-      setCategories(data.categories || []);
+      if (seq !== requestId.current) return;
+      setDocs(data.docs); setCategories(data.categories); setTags(data.tags);
     } catch (e) {
-      message.error((e as Error).message);
+      if (seq === requestId.current) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (seq === requestId.current) setLoading(false);
     }
-  }
+  }, []);
+  useEffect(() => { void refresh(filters); return () => { requestId.current++; }; }, [filters, refresh]);
+  useEffect(() => {
+    if (!dirty) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    const onLink = (event: MouseEvent) => {
+      const anchor = (event.target as Element).closest?.("a[href]");
+      if (anchor && !anchor.getAttribute("href")?.startsWith("#") && !window.confirm("文档尚未保存，确定离开并放弃修改？")) {
+        event.preventDefault(); event.stopPropagation();
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    document.addEventListener("click", onLink, true);
+    return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", onLink, true); };
+  }, [dirty]);
 
+  function navigate(action: () => void) {
+    if (saving || mutating) return;
+    if (dirty) modal.confirm({ title: "放弃未保存的修改？", content: "离开编辑器后，本次修改将丢失。", okText: "放弃修改", cancelText: "继续编辑", onOk: action });
+    else action();
+  }
+  function filter(patch: Partial<Filters>) {
+    navigate(() => { detailRequest.current++; setView("list"); setPage(1); setFilters((old) => ({ ...old, ...patch })); });
+  }
+  function back() { navigate(() => { detailRequest.current++; setView("list"); }); }
   async function openDoc(id: number) {
-    setDetailLoading(true);
-    setDetail(null);
-    setView("detail");
+    const seq = ++detailRequest.current;
+    setSelectedId(id); setDetail(null); setDetailError(""); setDetailLoading(true); setView("detail");
     try {
       const res = await fetch(`/api/knowledge/${id}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "加载失败");
-      setDetail(data.doc);
-    } catch (e) {
-      message.error((e as Error).message);
-      setView("list");
-    } finally {
-      setDetailLoading(false);
-    }
+      if (!res.ok) throw new Error(data.error || "文档加载失败");
+      if (seq === detailRequest.current) setDetail(data.doc);
+    } catch (e) { if (seq === detailRequest.current) setDetailError((e as Error).message); }
+    finally { if (seq === detailRequest.current) setDetailLoading(false); }
   }
-
-  /** 进入全页编辑视图：doc 为空即新建 */
-  function openEditor(doc?: DocRecord) {
-    setEditingId(doc?.id ?? null);
-    setETitle(doc?.title ?? "");
-    setECategory(doc?.category || undefined);
-    setETagsRaw(doc?.tags.join(" ") ?? "");
-    setEContent(doc?.content ?? "");
-    setEPane("write");
-    setView("edit");
+  function edit(doc?: DocRecord) {
+    navigate(() => {
+      detailRequest.current++;
+      setDetailLoading(false); setDetailError("");
+      const next: Draft = { title: doc?.title ?? "", category: doc?.category ?? (filters.category === "all" ? "未分类" : filters.category), tags: doc?.tags ?? [], content: doc?.content ?? "", visibility: doc?.visibility ?? defaultVisibility(user) };
+      setEditingId(doc?.id ?? null); setDraft(next); setBaseline(JSON.stringify(next)); setPane("split"); setView("edit");
+    });
   }
-
-  function backToList() {
-    setView("list");
-    setDetail(null);
-    setDetailLoading(false);
-  }
-
-  async function saveDoc() {
-    if (!eTitle.trim()) {
-      message.warning("请输入文档标题");
-      return;
-    }
+  async function save() {
+    if (saving) return;
+    if (!draft.title.trim()) { message.warning("请输入文档标题"); return; }
     setSaving(true);
     try {
-      const body = JSON.stringify({
-        title: eTitle.trim(),
-        category: eCategory ?? "",
-        tags: eTags,
-        content: eContent,
-      });
-      const res = await fetch(editingId ? `/api/knowledge/${editingId}` : "/api/knowledge", {
-        method: editingId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
+      const res = await fetch(editingId ? `/api/knowledge/${editingId}` : "/api/knowledge", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...draft, title: draft.title.trim() }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "保存失败");
-      message.success(editingId ? "文档已更新" : "文档已创建");
-      await refreshList();
-      // 保存后回到阅读视图
-      if (data.doc) {
-        setDetail(data.doc);
-        setView("detail");
-      } else {
-        backToList();
-      }
-    } catch (e) {
-      message.error((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
+      setBaseline(JSON.stringify(draft)); setDetail(data.doc); setSelectedId(data.doc.id); setView("detail");
+      message.success(editingId ? "文档已更新" : "文档已创建"); void refresh(filters);
+    } catch (e) { message.error((e as Error).message); }
+    finally { setSaving(false); }
   }
-
-  async function togglePin(doc: DocRecord) {
+  async function mutate(remove = false) {
+    if (!detail || mutating) return;
+    setMutating(true);
     try {
-      const res = await fetch(`/api/knowledge/${doc.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pinned: !doc.pinned }),
-      });
+      const res = await fetch(`/api/knowledge/${detail.id}`, { method: remove ? "DELETE" : "PATCH", headers: { "Content-Type": "application/json" }, ...(remove ? {} : { body: JSON.stringify({ pinned: !detail.pinned }) }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "操作失败");
-      setDetail(data.doc);
-      message.success(data.doc.pinned ? "已置顶" : "已取消置顶");
-      await refreshList();
-    } catch (e) {
-      message.error((e as Error).message);
-    }
+      if (remove) { setDetail(null); setView("list"); message.success("文档已删除"); }
+      else { setDetail(data.doc); message.success(data.doc.pinned ? "文档已置顶" : "已取消置顶"); }
+      void refresh(filters);
+    } catch (e) { message.error((e as Error).message); }
+    finally { setMutating(false); }
   }
-
-  async function removeDoc(doc: DocRecord) {
-    try {
-      const res = await fetch(`/api/knowledge/${doc.id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "删除失败");
-      message.success(`已删除「${doc.title}」`);
-      backToList();
-      await refreshList();
-    } catch (e) {
-      message.error((e as Error).message);
-    }
+  function download() {
+    if (!detail) return;
+    const url = URL.createObjectURL(new Blob([detail.content], { type: "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${detail.title.replace(/[\\/:*?"<>|]/g, "_")}.md`; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  const ordered = useMemo(() => [...docs].filter((doc) => !pinnedOnly || doc.pinned).sort((a, b) => b.pinned - a.pinned || (sort === "title" ? a.title.localeCompare(b.title, "zh-CN") : (sort === "created" ? b.created_at.localeCompare(a.created_at) : b.updated_at.localeCompare(a.updated_at)))), [docs, pinnedOnly, sort]);
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(ordered.length / 12)));
+  const hasFilters = filters.q || filters.category !== "all" || filters.tag || filters.mine !== "all" || pinnedOnly;
+  const writable = canEditRow(user, detail);
+  const patchDraft = (patch: Partial<Draft>) => setDraft((old) => ({ ...old, ...patch }));
 
-  /** 固定返回条：阅读/编辑共用，吸附在 sticky Header 下方 */
-  function TopBar({ extra }: { extra?: React.ReactNode }) {
-    return (
-      <div
-        style={{
-          position: "sticky",
-          top: 64, // 吸附在 sticky Header（64px）下方
-          zIndex: 9,
-          margin: "0 -8px 4px",
-          padding: "6px 8px",
-          background: "#f5f6fa", // 与 Content 背景一致，避免正文透出
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <Button type="text" icon={<ArrowLeftOutlined />} style={{ paddingLeft: 0 }} onClick={backToList}>
-          返回列表
-        </Button>
-        <span style={{ flex: 1 }} />
-        {extra}
-      </div>
-    );
-  }
-
-  // ============ 编辑视图（全页，与主界面同布局） ============
-  if (view === "edit") {
-    return (
-      <div style={{ maxWidth: 960, margin: "0 auto", width: "100%" }}>
-        <TopBar
-          extra={
-            <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={saveDoc}>
-              {editingId ? "保存" : "创建"}
-            </Button>
-          }
-        />
-        <Card style={{ borderRadius: 8 }} styles={{ body: { padding: "24px 32px" } }}>
-          {/* 标题 / 分类 / 标签：直接放在正文上方 */}
-          <Input
-            size="large"
-            variant="borderless"
-            placeholder="输入文档标题…"
-            value={eTitle}
-            maxLength={200}
-            onChange={(e) => setETitle(e.target.value)}
-            style={{ fontSize: 22, fontWeight: 600, padding: "0 0 10px", borderBottom: "1px solid #f0f0f0" }}
-          />
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", padding: "12px 0" }}>
-            <Select
-              placeholder="分类"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              value={eCategory}
-              onChange={setECategory}
-              options={categories.map((c) => ({ value: c.name, label: c.name }))}
-              notFoundContent="暂无分类，请先在管理后台创建分类"
-              style={{ minWidth: 160 }}
-            />
-            <Select
-              mode="tags"
-              placeholder="标签（回车确认，最多 10 个）"
-              value={eTags}
-              onChange={(vals) => setETagsRaw(vals.join(" "))}
-              open={false}
-              suffixIcon={null}
-              tokenSeparators={[",", "，", " ", "；", ";"]}
-              style={{ flex: 1, minWidth: 240 }}
-            />
+  return <section className={styles.root}>
+    <header className={styles.header}>
+      <div className={styles.heading}><span className={styles.brandIcon}><ReadOutlined /></span><div><h1>知识库</h1><p>把工作经验，整理成随时可用的知识。</p></div></div>
+      <Button type="primary" icon={<PlusOutlined />} onClick={() => edit()} disabled={saving || mutating}>新建文档</Button>
+    </header>
+    <div className={styles.workspace}>
+      <aside className={styles.sidebar} aria-label="知识库导航">
+        <div className={styles.library}><ReadOutlined /><strong>文档空间</strong><span>{total} 篇</span></div>
+        <div className={styles.sectionLabel}>浏览分类</div>
+        <nav className={styles.categories}>
+          {[{ id: -1, name: "all", count: total }, ...categories].map((item) => <button key={item.id} className={`${styles.navItem} ${filters.category === item.name ? styles.active : ""}`} aria-current={filters.category === item.name ? "true" : undefined} onClick={() => filter({ category: item.name })}><FolderOutlined /><span>{item.name === "all" ? "全部文档" : item.name}</span><small>{item.count}</small></button>)}
+        </nav>
+        <div className={styles.sectionLabel}>标签筛选</div>
+        <Select aria-label="按标签筛选" placeholder="选择或搜索标签" showSearch optionFilterProp="label" allowClear value={filters.tag || undefined} onChange={(tag) => filter({ tag: tag ?? "" })} options={tags.map((t) => ({ value: t.name, label: `${t.name} (${t.count})` }))} className={styles.tagSelect} />
+        <div className={styles.sidebarNote}><FileTextOutlined /><p>支持 Markdown 写作<br />分类由管理后台统一维护</p></div>
+      </aside>
+      <main className={styles.main}>
+        {view === "list" ? <>
+          <div className={styles.listHeader}><div><h2>{filters.category === "all" ? "全部文档" : filters.category}</h2><p>{loading ? "正在查找文档…" : `当前显示 ${ordered.length} 篇文档`}{pinnedOnly ? " · 仅看置顶" : " · 置顶优先"}</p></div><Button icon={<ReloadOutlined />} aria-label="刷新文档" onClick={() => refresh(filters)} loading={loading} /></div>
+          <div className={styles.toolbar}>
+            <Input.Search aria-label="搜索知识库" placeholder="搜索标题、标签或正文" value={search} onChange={(e) => setSearch(e.target.value)} allowClear onClear={() => filter({ q: "" })} onSearch={(q) => filter({ q: q.trim() })} enterButton={<SearchOutlined />} className={styles.search} />
+            <Select aria-label="文档可见范围" value={filters.mine} onChange={(mine) => filter({ mine })} options={[{ label: "全部可见", value: "all" }, { label: "我创建的", value: "1" }, { label: "通用文档", value: "public" }]} />
+            <Select aria-label="排序方式" value={sort} onChange={(v) => { setSort(v); setPage(1); }} options={[{ label: "最近更新", value: "updated" }, { label: "最近创建", value: "created" }, { label: "标题排序", value: "title" }]} />
+            <Button icon={<PushpinFilled />} type={pinnedOnly ? "primary" : "default"} aria-pressed={pinnedOnly} onClick={() => { setPinnedOnly(!pinnedOnly); setPage(1); }}>置顶</Button>
+            <Segmented aria-label="显示方式" value={layout} onChange={(v) => setLayout(String(v))} options={[{ value: "list", icon: <UnorderedListOutlined />, label: "列表" }, { value: "grid", icon: <AppstoreOutlined />, label: "卡片" }]} />
           </div>
-
-          {/* 正文：编写 / 实时预览 */}
-          <Segmented
-            value={ePane}
-            onChange={(v) => setEPane(v as "write" | "preview")}
-            options={[
-              { label: "编写", value: "write" },
-              { label: "预览", value: "preview" },
-            ]}
-            style={{ marginBottom: 10 }}
-          />
-          {ePane === "write" ? (
-            <Input.TextArea
-              value={eContent}
-              onChange={(e) => setEContent(e.target.value)}
-              placeholder={"# 标题\n\n支持 GFM：表格、任务列表、代码块…"}
-              autoSize={{ minRows: 20, maxRows: 40 }}
-              variant="borderless"
-              style={{
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                fontSize: 13.5,
-                lineHeight: 1.7,
-                padding: 0,
-              }}
-            />
-          ) : (
-            <div style={{ minHeight: 360, paddingTop: 4 }}>
-              <DocMarkdown content={eContent} />
+          {hasFilters && <div className={styles.filterSummary}><span>当前筛选</span>{filters.q && <Tag>关键词：{filters.q}</Tag>}{filters.tag && <Tag>标签：{filters.tag}</Tag>}{filters.mine !== "all" && <Tag>{filters.mine === "1" ? "我创建的" : "通用文档"}</Tag>}<Button type="link" size="small" onClick={() => { setSearch(""); setPinnedOnly(false); filter(emptyFilters); }}>清除筛选</Button></div>}
+          {error ? <Alert type="error" showIcon title="文档加载失败" description={error} action={<Button onClick={() => refresh(filters)}>重试</Button>} /> : <Spin spinning={loading}>
+            {ordered.length ? <div className={`${styles.documents} ${layout === "grid" ? styles.grid : ""}`}>
+              {ordered.slice((currentPage - 1) * 12, currentPage * 12).map((doc) => <button className={styles.document} key={doc.id} onClick={() => openDoc(doc.id)}>
+                <span className={styles.fileIcon}><FileTextOutlined /></span>
+                <div className={styles.docBody}><div className={styles.docTitle}>{!!doc.pinned && <PushpinFilled className={styles.pin} />}<h3>{doc.title}</h3></div><p className={styles.excerpt}><Excerpt text={doc.excerpt || "暂无正文，打开文档查看详情"} searched={!!filters.q} /></p><div className={styles.docTags}><Tag>{doc.category}</Tag><VisibilityTag value={doc.visibility} /><SourceTag source={doc.source} />{doc.tags.slice(0, 3).map((tag) => <span key={tag}>#{tag}</span>)}{doc.tags.length > 3 && <span>+{doc.tags.length - 3}</span>}</div></div>
+                <div className={styles.docMeta}><span>{dateLabel(doc.updated_at)}</span><span>{doc.created_by || "系统"}</span></div>
+              </button>)}
+            </div> : <div className={styles.empty}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={hasFilters ? "没有符合条件的文档，试试调整筛选或关键词。" : "还没有文档，从记录第一份工作经验开始。"} />{!hasFilters && <Button type="primary" onClick={() => edit()}>新建文档</Button>}</div>}
+          </Spin>}
+          {!error && ordered.length > 0 && <footer className={styles.footer}><span>{docs.length >= 500 ? "最多载入 500 篇，请通过搜索缩小范围" : `共 ${ordered.length} 篇文档`}</span><Pagination current={currentPage} total={ordered.length} pageSize={12} showSizeChanger={false} onChange={setPage} size="small" /></footer>}
+        </> : <>
+          <div className={styles.actionBar}><Button type="text" icon={<ArrowLeftOutlined />} onClick={back} disabled={saving || mutating}>返回文档列表</Button><div className={styles.actions}>
+            {view === "edit" ? <><span className={styles.saveState}>{dirty ? "有未保存的修改" : "尚无修改"}</span><Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>{editingId ? "保存修改" : "创建文档"}</Button></> : detail && <><Button icon={<DownloadOutlined />} onClick={download}>导出</Button>{writable && <><Button icon={<PushpinFilled />} loading={mutating} onClick={() => mutate()}>{detail.pinned ? "取消置顶" : "置顶"}</Button><Button icon={<EditOutlined />} onClick={() => edit(detail)} disabled={mutating}>编辑</Button><Popconfirm title="删除这篇文档？" description="删除后无法恢复。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => mutate(true)}><Button danger icon={<DeleteOutlined />} aria-label="删除文档" disabled={mutating} /></Popconfirm></>}</>}
+          </div></div>
+          {view === "edit" ? <div className={styles.editor}>
+            <Input aria-label="文档标题" placeholder="输入文档标题" maxLength={200} value={draft.title} onChange={(e) => patchDraft({ title: e.target.value })} className={styles.titleInput} disabled={saving} />
+            <div className={styles.editorFields}>
+              <div className={styles.field}><span>分类</span><Select aria-label="文档分类" showSearch optionFilterProp="label" value={draft.category} onChange={(category) => patchDraft({ category })} disabled={saving} options={Array.from(new Set(["未分类", draft.category, ...categories.map((c) => c.name)])).map((name) => ({ value: name, label: name }))} /></div>
+              <div className={`${styles.field} ${styles.tagsField}`}><span>标签</span><Select aria-label="文档标签" mode="tags" maxCount={10} maxTagCount="responsive" placeholder="输入后回车，最多 10 个" value={draft.tags} disabled={saving} onChange={(values) => patchDraft({ tags: Array.from(new Set(values.map((v: string) => v.trim()).filter(Boolean))).slice(0, 10) })} tokenSeparators={[",", "，", ";", "；"]} options={tags.map((t) => ({ value: t.name, label: t.name }))} /></div>
+              <div className={styles.field}><span>可见范围</span><VisibilitySelect user={user} value={draft.visibility} disabled={saving} onChange={(visibility) => patchDraft({ visibility })} /></div>
             </div>
-          )}
-        </Card>
-      </div>
-    );
-  }
-
-  // ============ 阅读视图（Markdown 实时渲染） ============
-  if (view === "detail") {
-    return (
-      <div style={{ maxWidth: 860, margin: "0 auto", width: "100%" }}>
-        <TopBar />
-        {/* 操作条：编辑、置顶、删除，放置在返回列表下一行 */}
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: 16,
-            alignItems: "center",
-          }}
-        >
-          <Button icon={<EditOutlined />} onClick={() => detail && openEditor(detail)} disabled={!detail}>
-            编辑
-          </Button>
-          <Button
-            icon={<PushpinFilled />}
-            onClick={() => detail && togglePin(detail)}
-            type={detail?.pinned ? "primary" : "default"}
-            disabled={!detail}
-          >
-            {detail?.pinned ? "取消置顶" : "置顶"}
-          </Button>
-          <span style={{ flex: 1 }} />
-          <Popconfirm
-            title="删除这篇文档？"
-            description="删除后不可恢复，FTS 索引将同步清理。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            onConfirm={() => detail && removeDoc(detail)}
-          >
-            <Button danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
-        </div>
-        {detailLoading ? (
-          <Card style={{ borderRadius: 8, minHeight: 360, display: "grid", placeItems: "center" }}>
-            <Spin size="large" />
-          </Card>
-        ) : detail ? (
-          <Card style={{ borderRadius: 8 }} styles={{ body: { padding: "32px 40px" } }}>
-            {/* 标题 */}
-            <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 8 }}>
-              {detail.title}
-              {!!detail.pinned && <PushpinFilled style={{ color: "#faad14", fontSize: 20, marginLeft: 10 }} />}
-            </Typography.Title>
-
-            {/* 元信息 */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
-              <Tag color={categoryColor(detail.category)}>{detail.category}</Tag>
-              <VisibilityTag value={detail.visibility} />
-              <SourceTag source={detail.source} />
-              {detail.tags.map((t) => (
-                <Tag key={t} color={tagColor(t)}>
-                  {t}
-                </Tag>
-              ))}
+            <div className={styles.editorToolbar}><Segmented value={pane} onChange={(v) => setPane(String(v))} options={[{ value: "write", label: "编写" }, { value: "split", label: "对照预览" }, { value: "preview", label: "预览" }]} /><span>Markdown · {draft.content.length} 字符</span></div>
+            <div className={`${styles.editorPanes} ${pane === "split" ? styles.split : ""}`}>
+              {pane !== "preview" && <Input.TextArea aria-label="文档正文" value={draft.content} disabled={saving} onChange={(e) => patchDraft({ content: e.target.value })} placeholder={"## 记录你的知识\n\n支持标题、列表、表格和代码块。"} autoSize={{ minRows: 22 }} className={styles.textarea} />}
+              {pane !== "write" && <div className={styles.preview}><DocMarkdown content={draft.content} /></div>}
             </div>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {detail.created_by || "-"} 创建于 {fmtTime(detail.created_at)} · 更新于 {fmtTime(detail.updated_at)}
-            </Typography.Text>
-
-            {/* 正文：Markdown 实时渲染 */}
-            <div style={{ marginTop: 24 }}>
-              <DocMarkdown content={detail.content} />
-            </div>
-          </Card>
-        ) : null}
-      </div>
-    );
-  }
-
-  // ============ 列表视图（原主界面） ============
-  return (
-    <div style={{ display: "grid", gap: 16 }}>
-      {/* 页头 */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <Space>
-          <Avatar shape="square" size={36} style={{ background: "#eaf0f6", color: "#345d88", fontSize: 18 }}>
-            <ReadOutlined />
-          </Avatar>
-          <div>
-            <Typography.Title level={4} style={{ margin: 0 }}>
-              知识库
-            </Typography.Title>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              搜索、整理和查阅工作资料 · {totalCount} 篇文档
-            </Typography.Text>
-          </div>
-        </Space>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()} size="large">
-          新建文档
-        </Button>
-      </div>
-
-      {/* 搜索与分类筛选 */}
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <Input.Search
-          placeholder="搜索标题、标签、正文…（支持中文，多个词按空格分隔）"
-          allowClear
-          enterButton={<SearchOutlined />}
-          style={{ maxWidth: 420, flex: "1 1 260px" }}
-          onSearch={(v) => {
-            setKeyword(v);
-            refreshList(v, category);
-          }}
-        />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {[{ name: "all", count: totalCount }, ...categories].map((c) => {
-            const active = category === c.name;
-            const color = c.name === "all" ? MODULE_COLOR : categoryColor(c.name);
-            return (
-              <button
-                key={c.name}
-                onClick={() => {
-                  setCategory(c.name);
-                  refreshList(keyword, c.name);
-                }}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "5px 14px",
-                  borderRadius: 999,
-                  cursor: "pointer",
-                  border: `1px solid ${active ? color : "#e4e7ec"}`,
-                  background: active ? color : "#fff",
-                  color: active ? "#fff" : "#595959",
-                  fontSize: 13,
-                  fontWeight: active ? 600 : 400,
-                  transition: "all .2s",
-                }}
-              >
-                {c.name === "all" ? "全部" : c.name}
-                <span style={{ opacity: 0.75, fontSize: 12 }}>{c.count}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 文档卡片 */}
-      <Spin spinning={loading}>
-        {docs.length === 0 ? (
-          <Card style={{ borderRadius: 8 }}>
-            <Empty
-              description={
-                keyword
-                  ? `没有匹配「${keyword}」的文档，换个关键词试试`
-                  : "知识库还是空的——点右上角「新建文档」写下第一篇"
-              }
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
-          </Card>
-        ) : (
-          <Row gutter={[16, 16]} align="stretch">
-            {docs.map((d) => {
-              const color = categoryColor(d.category);
-              return (
-                <Col xs={24} sm={12} lg={8} key={d.id} style={{ display: "flex" }}>
-                  <Card
-                    hoverable
-                    style={{ height: "100%", borderRadius: 8, borderColor: "#e2e7ec" }}
-                    onClick={() => openDoc(d.id)}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontWeight: 600,
-                            fontSize: 15,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                          }}
-                        >
-                          {!!d.pinned && (
-                            <PushpinFilled style={{ color: "#faad14", fontSize: 13, flexShrink: 0 }} />
-                          )}
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{d.title}</span>
-                        </div>
-                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                          {fmtTime(d.updated_at)} · {d.created_by || "-"}
-                        </Typography.Text>
-                      </div>
-                      <Space
-                        size={4}
-                        style={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: "55%" }}
-                      >
-                        <Tag color={color} style={{ margin: 0 }}>
-                          {d.category}
-                        </Tag>
-                        <VisibilityTag value={d.visibility} style={{ margin: 0 }} />
-                        <SourceTag source={d.source} />
-                      </Space>
-                    </div>
-                    <p
-                      style={{
-                        margin: "10px 0 0",
-                        fontSize: 12,
-                        color: "#595959",
-                        height: 36,
-                        overflow: "hidden",
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                    >
-                      {d.excerpt ? <Highlighted text={d.excerpt} /> : "（空文档）"}
-                    </p>
-                    {d.tags.length > 0 && (
-                      <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {d.tags.map((t) => (
-                          <Tag key={t} color={tagColor(t)} style={{ margin: 0, fontSize: 11 }}>
-                            {t}
-                          </Tag>
-                        ))}
-                      </div>
-                    )}
-                  </Card>
-                </Col>
-              );
-            })}
-          </Row>
-        )}
-      </Spin>
+          </div> : detailLoading ? <div className={styles.empty}><Spin description="正在加载文档"><div style={{ height: 160 }} /></Spin></div> : detailError ? <Alert type="error" title="无法打开文档" description={detailError} action={<Button onClick={() => selectedId && openDoc(selectedId)}>重试</Button>} /> : detail && <article className={styles.article}>
+            <div className={styles.articleCategory}><FolderOutlined /> {detail.category}{!!detail.pinned && <Tag icon={<PushpinFilled />}>已置顶</Tag>}</div><h2>{detail.title}</h2>
+            <div className={styles.articleMeta}><span>{detail.owner_name || detail.created_by || "系统"}</span><span>更新于 {dateLabel(detail.updated_at)}</span><VisibilityTag value={detail.visibility} /><SourceTag source={detail.source} />{!writable && <Tag>只读</Tag>}</div>
+            {!!detail.tags.length && <div className={styles.articleTags}>{detail.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}</div>}
+            <div className={styles.articleContent}><DocMarkdown content={detail.content} /></div>
+            <footer className={styles.articleFooter}>创建于 {dateLabel(detail.created_at)} · {detail.content.length} 字符</footer>
+          </article>}
+        </>}
+      </main>
     </div>
-  );
+  </section>;
 }

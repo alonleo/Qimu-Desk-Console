@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await requireUser();
   if (!user) return jsonError("未登录", 401);
-  const categories = await listCategories();
+  const categories = await listCategories(user);
   return NextResponse.json({ categories });
 }

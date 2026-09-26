@@ -30,8 +30,8 @@ export async function GET(req: Request) {
         user,
         mine,
       }),
-      listCategories(),
-      listTags(),
+      listCategories(user),
+      listTags(user),
     ]);
     return NextResponse.json({ docs, categories, tags });
   } catch (e) {
