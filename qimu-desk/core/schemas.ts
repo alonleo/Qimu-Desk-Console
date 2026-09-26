@@ -40,7 +40,7 @@ export const aiChatSchema = z.object({
   skillIds: z.array(z.number().int().positive()).optional(),
   workflowIds: z.array(z.number().int().positive()).optional(),
   capabilityIds: z.array(z.number().int().positive()).max(10).default([]),
-  allowToolCalls: z.boolean().default(false),
+  allowToolCalls: z.boolean().default(true),
 });
 
 /** 任务合法枚举 */

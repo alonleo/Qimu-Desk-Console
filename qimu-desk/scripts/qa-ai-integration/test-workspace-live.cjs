@@ -2,6 +2,7 @@
  * Required: E2E_BASE_URL, E2E_TOKEN (existing wb_token), DB_HOST/DB_USER/DB_PASSWORD/DB_NAME.
  * Instead of E2E_TOKEN: E2E_CREATE_TEST_USER=1 with configured JWT_SECRET provisions a temporary fixture.
  * Optional: E2E_NOTIFICATIONS_ONLY=1 verifies notification CRUD over SSE only.
+ * Optional: E2E_DEFAULT_ENTRY=1 omits allowToolCalls to test the ordinary API entry.
  * Optional: E2E_GATEWAY_ID; ADMIN_BACKEND_URL is required for emergency notice cleanup.
  * Run only against an environment running the current workspace-tools implementation.
  */
@@ -40,7 +41,7 @@ async function api(path, options = {}) {
 }
 async function chat(prompt, resource, stream = false) {
   const result = await api('/api/ai/chat', { method: 'POST', body: JSON.stringify({
-    messages: [{ role: 'user', content: prompt }], allowToolCalls: true, useKnowledge: false, stream,
+    messages: [{ role: 'user', content: prompt }], ...(process.env.E2E_DEFAULT_ENTRY === '1' ? {} : { allowToolCalls: true }), useKnowledge: false, stream,
     ...(process.env.E2E_GATEWAY_ID ? { gatewayId: Number(process.env.E2E_GATEWAY_ID) } : {}),
   }) });
   const runs = result.toolRuns || [];

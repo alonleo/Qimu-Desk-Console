@@ -219,6 +219,7 @@ ${workflowContexts.join("\n\n")}
 
   // 产物结构化提示词固定放 system 区末尾（RAG 上下文之后）
   sysBlocks.push({ role: "system", content: ARTIFACT_SYSTEM_PROMPT });
+  if (!allowToolCalls) sysBlocks.push({ role: "system", content: "当前 AI 操作开关已关闭，只能讨论和生成草稿，不能创建、修改或删除实际业务数据。如果用户要求操作任务、项目、知识库或通知公告，请说明需要先打开输入框下方的「AI 操作」；不要说工作台不支持这些模块。" });
 
   // 快捷指令 /create-* 优先；未命中则从自然语言关键词识别创建意图（技能/skill、工作流等）
   const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");

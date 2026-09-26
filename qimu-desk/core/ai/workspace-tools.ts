@@ -55,7 +55,7 @@ export function workspaceTools(admin: boolean, transport: WorkspaceTransport): C
   });
 }
 
-export const WORKSPACE_SYSTEM_PROMPT = `当前已启用工作台业务工具，可直接操作任务、项目、知识库、通知和公告，无需用户额外选择插件。
+export const WORKSPACE_SYSTEM_PROMPT = `当前已启用工作台业务工具，可直接操作任务、项目、知识库、通知和公告，无需用户额外选择插件。历史对话若称只能创建技能、工作流或草稿，那是旧能力描述；以本轮实际提供的工具为准。
 用户要求实际创建、修改、编辑或删除时，调用对应 workspace 工具；仅要求写草稿或预览时不要写入。
 知识文档直接入库时使用工具，不再输出重复的 knowledge 草稿卡片；明确 /create-doc 或 /create-knowledge 指令仍然只生成草稿。
 更新或删除前先查询并核对真实 ID 和内容，不得猜 ID；同名或目标不明确时询问。编辑只提交改变的字段，保留其余内容。

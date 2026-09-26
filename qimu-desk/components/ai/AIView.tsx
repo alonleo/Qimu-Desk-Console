@@ -152,6 +152,7 @@ const LS_USE_KNOWLEDGE_KEY = "alon:chat:useKnowledge";
 // 会话数据按登录用户隔离：key 携带用户 id，避免不同账号在同一浏览器下共享记录
 const sessionKeyOf = (userId: number) => `alon:chat:sessions:u${userId}`;
 const activeKeyOf = (userId: number) => `alon:chat:activeId:u${userId}`;
+const toolCallsKeyOf = (userId: number) => `alon:chat:allowToolCalls:u${userId}`;
 // 旧版无用户隔离的固定 key（仅一次性迁移到当前用户名下用）
 const LS_LEGACY_SESSIONS_KEY = "alon:chat:sessions";
 const LS_LEGACY_ACTIVE_KEY = "alon:chat:activeId";
@@ -372,7 +373,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   const [capabilityIds, setCapabilityIds] = useState<number[]>([]);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
   const [capabilitiesError, setCapabilitiesError] = useState("");
-  const [allowToolCalls, setAllowToolCalls] = useState(false);
+  const [allowToolCalls, setAllowToolCalls] = useState(true);
   const [liveToolRuns, setLiveToolRuns] = useState<ToolRun[]>([]);
   const loadCapabilities = useCallback(async () => {
     setCapabilitiesLoading(true); setCapabilitiesError("");
@@ -587,6 +588,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         setActiveId(null);
       }
     }
+    setAllowToolCalls(readLocalStorage(toolCallsKeyOf(userKey)) !== "false");
     setUseKnowledge(readLocalStorage(LS_USE_KNOWLEDGE_KEY) === "true");
     setRailOpen(readLocalStorage(LS_RAIL_KEY) !== "false");
     setHydrated(true);
@@ -614,6 +616,11 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     if (!hydrated) return;
     writeLocalStorage(LS_USE_KNOWLEDGE_KEY, String(useKnowledge));
   }, [useKnowledge, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || userKey == null) return;
+    writeLocalStorage(toolCallsKeyOf(userKey), String(allowToolCalls));
+  }, [allowToolCalls, hydrated, userKey]);
 
   const picked = useMemo(
     () => gateways?.find((g) => g.id === pickedId) || null,
@@ -1166,15 +1173,16 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     if (cut === 0) return;
     const base = items.slice(0, cut);
     if (!base.some((c) => c.role === "user")) return;
+    base[base.length - 1] = { ...base[base.length - 1], allowToolCalls };
     commitItems(activeConv.id, base);
 
     void runChat(activeConv.id, base, {
       skillIds: base[base.length - 1].usedSkills?.map((s) => s.id),
       workflowIds: base[base.length - 1].usedWorkflows?.map((w) => w.id),
       capabilityIds: base[base.length - 1].usedCapabilities?.map((c) => c.id),
-      allowToolCalls: base[base.length - 1].allowToolCalls,
+      allowToolCalls,
     });
-  }, [activeConv, streaming, picked, commitItems, runChat]);
+  }, [activeConv, streaming, picked, commitItems, runChat, allowToolCalls]);
 
   const copyAnswer = useCallback(
     (content: string) => {
@@ -1250,7 +1258,14 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   // ============ 渲染：欢迎空状态（DeepSeek 风格居中） ============
   const renderWelcome = () => {
     const noGateway = gateways !== null && !gateways.some((g) => g.enabled);
+    const workspaceCards = [
+      { key: "tasks", title: "管理任务", desc: "创建任务、修改状态或删除任务", prompt: "请帮我创建一个任务：\n标题：\n优先级：普通\n备注：", icon: <ThunderboltOutlined /> },
+      { key: "projects", title: "管理项目", desc: "创建项目、编辑说明或归档项目", prompt: "请帮我创建一个项目：\n名称：\n描述：", icon: <PartitionOutlined /> },
+      { key: "docs", title: "管理知识库", desc: "保存文档、编辑正文或删除文档", prompt: "请将以下内容直接保存到知识库：\n标题：\n正文：", icon: <BookOutlined /> },
+      ...(isAdmin ? [{ key: "notices", title: "管理通知公告", desc: "创建草稿、编辑内容或发布公告", prompt: "请帮我创建一条公告草稿，暂不发布：\n标题：\n内容：", icon: <MessageOutlined /> }] : []),
+    ];
     const cards = [
+      ...workspaceCards.map((card) => ({ ...card, onClick: () => { setAllowToolCalls(true); fillTemplate(card.prompt); } })),
       ...QUICK_TEMPLATES.map((t) => ({
         key: t.key,
         title: `创建${t.label}草稿`,
@@ -1292,7 +1307,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             maxWidth: 520,
           }}
         >
-          查找知识库资料，或起草技能、工作流和文档。
+          直接管理任务、项目和知识库，或起草技能与工作流。{isAdmin ? "也可以管理通知和公告。" : ""}
         </div>
 
         {gateways === null ? (
@@ -1403,7 +1418,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             justifyContent: "center",
           }}
         >
-          <span>直接描述需求，AI 会自动识别「技能 / 工作流 / 文档」创建意图</span>
+          <span>{allowToolCalls ? "AI 操作已开启，可直接创建、编辑和删除业务内容" : "AI 操作已关闭，当前仅讨论或起草；打开下方开关即可执行"}</span>
           <span>·</span>
           <span>Enter 发送，Shift + Enter 换行</span>
         </div>
@@ -1692,7 +1707,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     const canSend = hydrated && !!picked?.enabled && !streaming && input.trim().length > 0;
     const placeholder = !picked
       ? "请先选择一个可用的 AI 网关"
-      : streaming ? "正在生成…" : "输入消息，或输入 / 引用技能与工作流";
+      : streaming ? "正在生成…" : (allowToolCalls ? "描述要创建、修改或删除的任务、项目、文档…" : "AI 操作已关闭，可提问或起草内容");
     const flatItems = slashGroups.flatMap((g) => g.items);
     const activeToken = flatItems[slashActiveIndex]?.token ?? null;
     return (
@@ -1781,7 +1796,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                 <PillSwitch icon={<DatabaseOutlined />} label="参考知识库" checked={useKnowledge} onChange={setUseKnowledge} />
                 <Tooltip title="开启后可直接通过对话创建、编辑、删除任务、项目和知识库内容；管理员还可管理通知公告。同时允许调用已选择的 MCP 工具和技能。">
                   <span><PillSwitch icon={<ApiOutlined />} label="AI 操作" checked={allowToolCalls}
-                    onChange={(value) => { if (!streaming) setAllowToolCalls(value); }} /></span>
+                    onChange={(value) => { if (!streaming && hydrated) setAllowToolCalls(value); }} /></span>
                 </Tooltip>
               </div>
               <div className={composerStyles.actions}>
