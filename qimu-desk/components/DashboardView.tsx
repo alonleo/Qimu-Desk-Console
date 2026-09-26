@@ -272,7 +272,7 @@ export default function DashboardView({
       <section className="module-section" aria-labelledby="desk-modules-title">
         <div className="module-section-heading"><h2 id="desk-modules-title">工作模块</h2><span>按工作内容查找入口</span></div>
         <div className="module-directory desk-directory">
-          {DESK_GROUPS.filter(group => group.key !== "administration").map(group => (
+          {DESK_GROUPS.map(group => (
             <section className="module-group-card" key={group.key}>
               <h3>{group.label}</h3>
               <div className="module-link-list">

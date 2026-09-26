@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import {
   ApartmentOutlined,
   CheckSquareOutlined,
-  CloudServerOutlined,
   DashboardOutlined,
   FolderOutlined,
   MessageOutlined,
@@ -11,7 +10,6 @@ import {
   RobotOutlined,
   ThunderboltOutlined,
   UserOutlined,
-  TeamOutlined,
 } from "@ant-design/icons";
 
 /**
@@ -28,9 +26,7 @@ export type ModuleKey =
   | "knowledge"
   | "ai"
   | "chat"
-  | "hub"
-  | "profile"
-  | "users";
+  | "profile";
 
 export type ModuleMeta = {
   href: string;
@@ -91,16 +87,9 @@ export const MODULE_META: Record<ModuleKey, ModuleMeta> = {
   },
   chat: {
     href: "/chat",
-    label: "消息",
+    label: "聊天会话",
     color: "#61778e",
     icon: <MessageOutlined />,
-  },
-  hub: {
-    href: "/hub",
-    label: "管理后台",
-    color: "#61778e",
-    icon: <CloudServerOutlined />,
-    adminOnly: true,
   },
   profile: {
     href: "/profile",
@@ -108,13 +97,7 @@ export const MODULE_META: Record<ModuleKey, ModuleMeta> = {
     color: "#61778e",
     icon: <UserOutlined />,
   },
-  users: {
-    href: "/users",
-    label: "用户管理",
-    color: "#61778e",
-    icon: <TeamOutlined />,
-    adminOnly: true,
-  },
+
 };
 
 /** 品牌主色（对齐《平台界面设计系统》品牌绿，antd 主题 token 同源） */
@@ -130,7 +113,6 @@ export const DESK_GROUPS: { key: string; label: string; modules: ModuleKey[] }[]
   { key: "work", label: "日常工作", modules: ["tasks", "projects", "knowledge"] },
   { key: "collaboration", label: "团队协作", modules: ["chat", "notices"] },
   { key: "automation", label: "助手与自动化", modules: ["ai", "skills", "workflows"] },
-  { key: "administration", label: "管理入口", modules: ["users", "hub"] },
 ];
 export const DESK_PATH_GROUPS = Object.fromEntries(
   DESK_GROUPS.flatMap(group => group.modules.map(key => [MODULE_META[key].href, group.label])),
