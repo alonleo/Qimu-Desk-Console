@@ -47,7 +47,6 @@ import {
   type SlashItem,
 } from "@/core/ai/slashCommands";
 import SlashCommandMenu from "@/components/ai/SlashCommandMenu";
-import { adminUrl } from "@/core/admin-url";
 import {
   ApiOutlined,
   ArrowUpOutlined,
@@ -1780,8 +1779,8 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             <div className={composerStyles.footer}>
               <div className={composerStyles.options}>
                 <PillSwitch icon={<DatabaseOutlined />} label="参考知识库" checked={useKnowledge} onChange={setUseKnowledge} />
-                <Tooltip title="允许模型调用本次选择的 MCP 工具和已引用的工作台技能，调用可能修改外部数据。">
-                  <span><PillSwitch icon={<ApiOutlined />} label="允许工具调用" checked={allowToolCalls}
+                <Tooltip title="开启后可直接通过对话创建、编辑、删除任务、项目和知识库内容；管理员还可管理通知公告。同时允许调用已选择的 MCP 工具和技能。">
+                  <span><PillSwitch icon={<ApiOutlined />} label="AI 操作" checked={allowToolCalls}
                     onChange={(value) => { if (!streaming) setAllowToolCalls(value); }} /></span>
                 </Tooltip>
               </div>
@@ -1961,29 +1960,6 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   // ============ 渲染：网关设置 Drawer ============
   const renderSettings = (
     <div style={{ width: "100%" }}>
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="模型参数与管理后台同步"
-        description={
-          <Space direction="vertical" size={6} style={{ width: "100%" }}>
-            <Text type="secondary">
-              {isAdmin ? "点击输入输出可设置每个模型的上下文、输出预算和超时。网关新增、删除及密钥管理请前往管理后台。" : "可查看当前模型参数；修改模型配置需要管理员权限。"}
-            </Text>
-            <Button
-              type="primary"
-              ghost
-              icon={<SettingOutlined />}
-              href={`${adminUrl()}/ai`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              前往管理后台配置 <span style={{ marginLeft: 4 }}>↗</span>
-            </Button>
-          </Space>
-        }
-      />
       {gateways === null ? (
         <Skeleton active />
       ) : gateways.length === 0 ? (
