@@ -275,7 +275,7 @@ export default function SkillsView({
       error: run.error || "",
       durationMs: run.duration_ms || 0,
     });
-    setTab("execute");
+    setTab("result");
   }
   async function doRun() {
     if (!selected || runLock.current) return;
@@ -289,6 +289,7 @@ export default function SkillsView({
     }
     setRunning(true);
     setResult(null);
+    setTab("result");
     try {
       const data: RunResult = await fetch(`/api/skills/${selected.id}/run`, {
         method: "POST",
@@ -296,6 +297,7 @@ export default function SkillsView({
         body: JSON.stringify({ params: values }),
       }).then(readResponse);
       setResult(data);
+      setTab("result");
       message[data.status === "success" ? "success" : "warning"](
         data.status === "success" ? "技能执行成功" : "技能执行失败，请查看结果",
       );
@@ -555,7 +557,7 @@ export default function SkillsView({
             <div>
               <strong>从一次执行开始</strong>
               <p>
-                打开技能，确认参数后执行。运行结果与历史记录会保存在技能详情中。
+                打开技能，确认参数后执行。在独立的执行结果页签查看输出，也可从运行历史重新打开。
               </p>
             </div>
           </div>
@@ -675,49 +677,56 @@ export default function SkillsView({
                       >
                         {running ? "正在执行，请稍候…" : "执行技能"}
                       </Button>
-                      <section className={styles.result} aria-live="polite">
-                        <div className={styles.executionHeading}>
-                          <h3>
-                            {result ? `执行结果 #${result.runId}` : "执行结果"}
-                          </h3>
-                          {result && (
-                            <Typography.Text
-                              copyable={{ text: result.output || result.error }}
-                            >
-                              复制结果
-                            </Typography.Text>
-                          )}
-                        </div>
-                        {running ? (
-                          <div className={styles.resultEmpty}>
-                            <Spin />
-                            <p>正在处理，结果将在完成后显示。</p>
-                          </div>
-                        ) : result ? (
-                          <>
-                            <div className={styles.resultMeta}>
-                              <RunStatus status={result.status} />
-                              <span>耗时 {fmtDuration(result.durationMs)}</span>
-                            </div>
-                            {result.error && (
-                              <Alert
-                                type="error"
-                                title={result.error}
-                                showIcon
-                              />
-                            )}
-                            <RunOutput
-                              key={result.runId}
-                              output={result.output || ""}
-                            />
-                          </>
-                        ) : (
-                          <p className={styles.resultEmpty}>
-                            执行技能或选择历史记录后，在这里查看结果。
-                          </p>
-                        )}
-                      </section>
                     </>
+                  ),
+                },
+                {
+                  key: "result",
+                  label: "执行结果",
+                  children: (
+                    <section className={styles.result} aria-live="polite">
+                      <div className={styles.executionHeading}>
+                        <h3>
+                          {result ? `执行结果 #${result.runId}` : "执行结果"}
+                        </h3>
+                        {result && (
+                          <Typography.Text
+                            copyable={{ text: result.output || result.error }}
+                          >
+                            复制结果
+                          </Typography.Text>
+                        )}
+                      </div>
+                      {running ? (
+                        <div className={styles.resultEmpty}>
+                          <Spin />
+                          <p>正在处理，结果将在完成后显示。</p>
+                        </div>
+                      ) : result ? (
+                        <>
+                          <div className={styles.resultMeta}>
+                            <RunStatus status={result.status} />
+                            <span>耗时 {fmtDuration(result.durationMs)}</span>
+                          </div>
+                          {result.error && (
+                            <Alert
+                              type="error"
+                              title={result.error}
+                              showIcon
+                            />
+                          )}
+                          <RunOutput
+                            key={result.runId}
+                            output={result.output || ""}
+                            maxHeight={600}
+                          />
+                        </>
+                      ) : (
+                        <p className={styles.resultEmpty}>
+                          执行技能或选择历史记录后，在这里查看结果。
+                        </p>
+                      )}
+                    </section>
                   ),
                 },
                 {

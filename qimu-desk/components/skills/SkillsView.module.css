@@ -371,9 +371,8 @@
   margin: 0 0 20px;
 }
 .result {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid #dce2e8;
+  min-width: 0;
+  padding-top: 4px;
 }
 .resultEmpty {
   text-align: center;
