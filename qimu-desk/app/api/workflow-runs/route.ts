@@ -12,6 +12,9 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const wfParam = url.searchParams.get("workflowId");
   const limitParam = url.searchParams.get("limit");
+  const runParam = url.searchParams.get("runId");
+  const runId = runParam ? Number(runParam) : undefined;
+  if (runId !== undefined && (!Number.isInteger(runId) || runId <= 0)) return jsonError("无效的 runId", 400);
 
   const workflowId = wfParam ? Number(wfParam) : undefined;
   if (workflowId !== undefined && (!Number.isInteger(workflowId) || workflowId <= 0)) {
@@ -21,7 +24,7 @@ export async function GET(req: Request) {
   if (!Number.isInteger(limit) || limit <= 0) return jsonError("无效的 limit", 400);
 
   try {
-    const runs = await listWorkflowRuns(workflowId, limit);
+    const runs = await listWorkflowRuns(workflowId, limit, user, runId);
     return NextResponse.json({ runs });
   } catch (e) {
     return jsonError(`获取运行历史失败：${(e as Error).message}`, 500);

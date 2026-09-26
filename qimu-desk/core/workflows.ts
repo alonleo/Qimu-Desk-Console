@@ -706,7 +706,7 @@ export async function listWorkflows(
   } else if (opts.mine === "public") {
     where = " WHERE w.visibility = 'public'";
   } else if (scope.clause) {
-    where = scope.clause;
+    where = ` WHERE 1=1${scope.clause}`;
     params.push(...scope.params);
   }
   try {
@@ -770,10 +770,17 @@ export async function getWorkflowDetail(
 }
 
 /** 运行历史（可按工作流过滤），含逐步日志 */
-export async function listWorkflowRuns(workflowId?: number, limit = 20): Promise<WorkflowRunItem[]> {
+export async function listWorkflowRuns(workflowId?: number, limit = 20, user?: { id: number; role: "admin" | "member" } | null, runId?: number): Promise<WorkflowRunItem[]> {
   const lim = Math.min(Math.max(limit, 1), 100);
-  const where = workflowId ? "WHERE r.workflow_id = ?" : "";
-  const params = workflowId ? [workflowId] : [];
+  let where = "WHERE 1=1";
+  const params: (string | number)[] = [];
+  if (workflowId) { where += " AND r.workflow_id = ?"; params.push(workflowId); }
+  if (runId) { where += " AND r.id = ?"; params.push(runId); }
+  if (user !== undefined) {
+    const scope = memberScopeSql(user, "w");
+    where += scope.clause;
+    params.push(...scope.params);
+  }
   const all = await rows<WorkflowRunItem & { logs: string | null }>(
     `SELECT r.id, r.workflow_id, w.name AS workflow_name, r.status, r.\`trigger\`, r.triggered_by,
             r.duration_ms, r.started_at, r.finished_at, r.logs

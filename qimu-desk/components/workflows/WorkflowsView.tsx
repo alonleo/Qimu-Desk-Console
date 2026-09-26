@@ -1,813 +1,231 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  App,
-  Avatar,
-  Button,
-  Card,
-  Col,
-  Collapse,
-  Drawer,
-  Empty,
-  Form,
-  Input,
-  Row,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
-import {
-  ApartmentOutlined,
-  ApiOutlined,
-  CheckCircleFilled,
-  ClockCircleOutlined,
-  CloseCircleFilled,
-  CodeOutlined,
-  FileTextOutlined,
-  HistoryOutlined,
-  LoadingOutlined,
-  MinusCircleFilled,
-  PlayCircleFilled,
-  RobotOutlined,
-  ThunderboltFilled,
-} from "@ant-design/icons";
-import type {
-  StepType,
-  StepLog,
-  WorkflowRecord,
-} from "@/core/workflows";
-import type { SkillParam } from "@/core/skills";
+import { Alert, App, Button, Collapse, Empty, Form, Input, Select, Space, Spin, Table, Tabs, Tag } from "antd";
+import { ApartmentOutlined, ApiOutlined, CheckCircleFilled, ClockCircleOutlined, CloseCircleFilled, CodeOutlined, FileTextOutlined, PlayCircleFilled, ReloadOutlined, RobotOutlined, SearchOutlined, ThunderboltFilled } from "@ant-design/icons";
+import type { StepType, StepLog, WorkflowRecord } from "@/core/workflows";
 import RunOutput from "@/components/skills/RunOutput";
 import YamlBlock from "@/components/skills/YamlBlock";
 import SourceTag from "@/components/SourceTag";
 import VisibilityTag from "@/components/VisibilityTag";
+import "./workflows.css";
 
-/** 五类步骤的视觉标识（图标 + 专属色） */
 export const STEP_META: Record<StepType, { label: string; color: string; icon: ReactNode }> = {
-  shell: { label: "Shell", color: "#52c41a", icon: <CodeOutlined /> },
-  http: { label: "HTTP", color: "#13c2c2", icon: <ApiOutlined /> },
-  template: { label: "模板", color: "#1677ff", icon: <FileTextOutlined /> },
-  skill: { label: "技能", color: "#00c896", icon: <ThunderboltFilled /> },
-  llm: { label: "AI", color: "#fa8c16", icon: <RobotOutlined /> },
+  shell: { label: "Shell", color: "#389e0d", icon: <CodeOutlined /> },
+  http: { label: "HTTP", color: "#08979c", icon: <ApiOutlined /> },
+  template: { label: "模板", color: "#345d88", icon: <FileTextOutlined /> },
+  skill: { label: "技能", color: "#00856a", icon: <ThunderboltFilled /> },
+  llm: { label: "AI", color: "#c87816", icon: <RobotOutlined /> },
 };
-
-const MODULE_COLOR = "#fa8c16";
-
-/** 页面级最近运行（轻量，不含日志） */
-export type RunSummary = {
-  id: number;
-  workflow_name: string;
-  status: string;
-  duration_ms: number | null;
-  triggered_by: string | null;
-  started_at: string;
-};
-
-type RunView = {
-  runId: number;
-  status: string;
-  durationMs: number | null;
-  steps: StepLog[];
-};
-
-function gradient(color: string): string {
-  return color;
+export type RunSummary = { id: number; workflow_id: number; workflow_name: string; status: string; duration_ms: number | null; triggered_by: string | null; started_at: string; steps?: StepLog[] };
+const statusLabels: Record<string, string> = { success: "成功", failed: "失败", running: "运行中", skipped: "已跳过", idle: "未运行" };
+function fmtTime(s?: string | null) { return s ? s.replace("T", " ").slice(0, 16) : "—"; }
+function fmtDuration(ms?: number | null) { return ms == null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`; }
+function Status({ status }: { status?: string | null }) {
+  return <Tag color={status === "success" ? "success" : status === "failed" ? "error" : status === "running" ? "processing" : "default"} icon={status === "success" ? <CheckCircleFilled /> : status === "failed" ? <CloseCircleFilled /> : <ClockCircleOutlined />}>{statusLabels[status || "idle"] || status}</Tag>;
+}
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { cache: "no-store", ...init });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "加载失败，请重试");
+  return data;
 }
 
-/** 时间展示：MySQL 以本地时（Asia/Shanghai）存文本，直接按文本截取，不做时区换算 */
-function fmtTime(s?: string | null): string {
-  if (!s) return "-";
-  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(s);
-  if (!m) return s;
-  return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
-}
-
-function fmtDuration(ms?: number | null): string {
-  if (ms === null || ms === undefined) return "-";
-  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
-}
-
-function RunStatusIcon({ status }: { status: string }) {
-  if (status === "success") return <CheckCircleFilled style={{ color: "#52c41a", fontSize: 15 }} />;
-  if (status === "failed") return <CloseCircleFilled style={{ color: "#ff4d4f", fontSize: 15 }} />;
-  return <ClockCircleOutlined style={{ color: "#faad14", fontSize: 15 }} />;
-}
-
-export default function WorkflowsView({
-  initialWorkflows,
-  initialRuns,
-}: {
-  initialWorkflows: WorkflowRecord[];
-  initialRuns: RunSummary[];
-}) {
+export default function WorkflowsView({ initialWorkflows, initialRuns }: { initialWorkflows: WorkflowRecord[]; initialRuns: RunSummary[] }) {
   const { message, notification } = App.useApp();
-  const [workflows, setWorkflows] = useState<WorkflowRecord[]>(initialWorkflows);
-  const [selected, setSelected] = useState<WorkflowRecord | null>(null);
-  const [drawerRuns, setDrawerRuns] = useState<(RunSummary & { steps: StepLog[] })[]>([]);
-  const [runsLoading, setRunsLoading] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<RunView | null>(null);
-  const [runLog, setRunLog] = useState<RunSummary[]>(initialRuns);
+  const [workflows, setWorkflows] = useState(initialWorkflows);
+  const [runs, setRuns] = useState(initialRuns);
+  const [selectedId, setSelectedId] = useState<number | null>(initialWorkflows[0]?.id ?? null);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [scope, setScope] = useState("all");
+  const [sort, setSort] = useState("name");
+  const [tab, setTab] = useState("run");
+  const [history, setHistory] = useState<RunSummary[]>([]);
+  const [result, setResult] = useState<RunSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const [submittingId, setSubmittingId] = useState<number | null>(null);
+  const [pending, setPending] = useState<Record<number, { workflowId: number; name: string }>>({});
   const [form] = Form.useForm();
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
+  const mounted = useRef(true);
+  const submitLock = useRef(false);
+  const detailSequence = useRef(0);
+  const requestedRun = useRef<RunSummary | null>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const selected = workflows.find(w => w.id === selectedId);
 
-  const stopPolling = useCallback(() => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
+  const refresh = useCallback(async () => {
+    const [list, recent] = await Promise.all([
+      request<{ workflows: WorkflowRecord[] }>("/api/workflows"),
+      request<{ runs: RunSummary[] }>("/api/workflow-runs?limit=100"),
+    ]);
+    if (!mounted.current) return;
+    setWorkflows(list.workflows);
+    setRuns(recent.runs);
+    setSelectedId(id => list.workflows.some(w => w.id === id) ? id : list.workflows[0]?.id ?? null);
+    setError("");
   }, []);
 
-  // 组件卸载时清理结果轮询
-  useEffect(() => stopPolling, [stopPolling]);
-
-  const totalSteps = useMemo(
-    () => workflows.reduce((n, w) => n + w.stepCount, 0),
-    [workflows]
-  );
-
-  /** 静默刷新：管理后台增删工作流后，工作台无需手动刷新即可同步。
-   *  仅在数据真正变化时 setState，避免每 10s 轮询把全部卡片无差别重渲染（表现为"整页都在刷新"） */
-  const refresh = useCallback(async () => {
+  const loadHistory = useCallback(async (id: number) => {
+    const sequence = ++detailSequence.current;
+    setLoading(true);
+    setHistoryError("");
     try {
-      const [list, runs] = await Promise.all([
-        fetch("/api/workflows").then((r) => (r.ok ? r.json() : null)).catch(() => null),
-        fetch("/api/workflow-runs?limit=10").then((r) => (r.ok ? r.json() : null)).catch(() => null),
-      ]);
-      if (list?.workflows) {
-        const next: WorkflowRecord[] = list.workflows;
-        setWorkflows((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
-        // 选中的工作流已被删除 → 自动收起抽屉；数据无变化时保留原引用（不触发抽屉重渲染）
-        setSelected((prev) => {
-          if (!prev) return null;
-          const hit = next.find((w) => w.id === prev.id);
-          if (!hit) return null;
-          return JSON.stringify(hit) === JSON.stringify(prev) ? prev : hit;
-        });
-      }
-      if (runs?.runs) {
-        setRunLog((prev) => (JSON.stringify(prev) === JSON.stringify(runs.runs) ? prev : runs.runs));
-      }
-    } catch {
-      /* 静默刷新失败不打扰用户 */
+      const data = await request<{ runs: RunSummary[] }>(`/api/workflows/${id}`);
+      if (mounted.current && selectedRef.current === id && sequence === detailSequence.current) setHistory(data.runs);
+    } catch (e) {
+      if (mounted.current && selectedRef.current === id && sequence === detailSequence.current) setHistoryError((e as Error).message);
+    } finally {
+      if (mounted.current && selectedRef.current === id && sequence === detailSequence.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // 页面可见期间每 10s 轮询；切回标签页 / 窗口聚焦时立即刷新
-    const tick = () => {
-      if (document.visibilityState === "visible") refresh();
+    let busy = false;
+    const tick = async () => {
+      if (busy || document.visibilityState !== "visible") return;
+      busy = true;
+      try { await refresh(); } catch { if (mounted.current) setError("自动同步失败，当前展示上次数据。请检查连接后刷新。"); } finally { busy = false; }
     };
-    const id = setInterval(tick, 10_000);
-    document.addEventListener("visibilitychange", tick);
+    const timer = setInterval(tick, 10_000);
     window.addEventListener("focus", tick);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", tick);
-      window.removeEventListener("focus", tick);
-    };
+    return () => { clearInterval(timer); window.removeEventListener("focus", tick); };
   }, [refresh]);
 
-  async function openWorkflow(w: WorkflowRecord) {
-    setSelected(w);
-    setResult(null);
-    stopPolling(); // 切换工作流时终止上一轮结果轮询
-    const defaults: Record<string, string> = {};
-    for (const p of w.params) if (p.default !== undefined) defaults[p.name] = p.default;
+  useEffect(() => {
+    setHistory([]);
+    const requested = requestedRun.current;
+    setResult(requested?.workflow_id === selectedId ? requested : null);
+    setTab(requested?.workflow_id === selectedId ? "logs" : "run");
+    requestedRun.current = null;
     form.resetFields();
-    form.setFieldsValue(defaults);
-    setDrawerRuns([]);
-    setRunsLoading(true);
-    try {
-      const res = await fetch(`/api/workflows/${w.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setDrawerRuns(
-          (data.runs || []).map((r: RunSummary & { steps: StepLog[] }) => ({
-            id: r.id,
-            workflow_name: r.workflow_name,
-            status: r.status,
-            duration_ms: r.duration_ms,
-            triggered_by: r.triggered_by,
-            started_at: r.started_at,
-            steps: r.steps || [],
-          }))
-        );
-      }
-    } catch {
-      /* 历史加载失败不阻塞抽屉 */
-    } finally {
-      setRunsLoading(false);
-    }
-  }
+    if (selectedId != null) void loadHistory(selectedId);
+  }, [selectedId, form, loadHistory]);
 
-  /** 本地时间文本（与 MySQL 存储格式对齐） */
-  function localNow(): string {
-    const n = new Date();
-    const p = (x: number) => String(x).padStart(2, "0");
-    return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())} ${p(n.getHours())}:${p(
-      n.getMinutes()
-    )}:${p(n.getSeconds())}`;
-  }
+  useEffect(() => {
+    const activeRuns = runs.filter(r => r.status === "running");
+    setPending(prev => {
+      const missing = activeRuns.filter(r => !prev[r.id]);
+      return missing.length ? { ...prev, ...Object.fromEntries(missing.map(r => [r.id, { workflowId: r.workflow_id, name: r.workflow_name }])) } : prev;
+    });
+  }, [runs]);
 
-  /** 刷新抽屉内运行历史（静默） */
-  async function reloadDrawerRuns(workflowId: number) {
-    const detail = await fetch(`/api/workflows/${workflowId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
-    if (detail?.runs) {
-      setDrawerRuns(
-        detail.runs.map((r: RunSummary & { steps: StepLog[] }) => ({
-          id: r.id,
-          workflow_name: r.workflow_name,
-          status: r.status,
-          duration_ms: r.duration_ms,
-          triggered_by: r.triggered_by,
-          started_at: r.started_at,
-          steps: r.steps || [],
-        }))
-      );
-    }
-  }
-
-  /**
-   * 后台执行：提交后接口立即返回 runId（不卡界面），
-   * 每 2s 轮询运行状态，完成后顶部 notification 弹窗通知并展示结果。
-   */
-  async function doRun() {
-    if (!selected) return;
-    const values = (await form.validateFields()) as Record<string, string>;
-    stopPolling();
-    setRunning(true);
-    setResult(null);
-    try {
-      const res = await fetch(`/api/workflows/${selected.id}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ params: values, async: true }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "提交失败");
-      const runId = data.runId as number;
-      const wf = selected; // 捕获当前工作流，轮询回调期间抽屉可能已切换
-
-      // 乐观插入一条 running 记录（10s 静默刷新也会自动纠正）
-      setRunLog((prev) =>
-        [
-          {
-            id: runId,
-            workflow_name: wf.displayName || wf.name,
-            status: "running",
-            duration_ms: null,
-            triggered_by: "我",
-            started_at: localNow(),
-          } as RunSummary,
-          ...prev,
-        ].slice(0, 10)
-      );
-
-      // 提交成功即解锁界面，转入后台等待
-      setRunning(false);
-      message.success(`已提交后台执行（运行 #${runId}），完成后顶部通知`);
-
-      pollTimerRef.current = setInterval(async () => {
+  // 每次提交独立跟踪；切换工作流不影响通知，也不会把结果写入其他工作流。
+  useEffect(() => {
+    if (!Object.keys(pending).length) return;
+    let disposed = false;
+    let busy = false;
+    const tick = async () => {
+      if (busy) return;
+      busy = true;
+      await Promise.all(Object.entries(pending).map(async ([id, entry]) => {
         try {
-          const rr = await fetch(`/api/workflow-runs?workflowId=${wf.id}&limit=10`);
-          if (!rr.ok) return;
-          const dd = await rr.json();
-          const hit = ((dd.runs || []) as (RunSummary & { steps: StepLog[] })[]).find(
-            (x) => x.id === runId
-          );
-          // 仍在执行 / 记录尚未可见 → 继续等待
-          if (!hit || hit.status === "running") return;
-          stopPolling();
+          const data = await request<{ runs: RunSummary[] }>(`/api/workflow-runs?runId=${id}`);
+          if (disposed || !mounted.current) return;
+          const hit = data.runs.find(r => r.id === Number(id));
+          if (!hit) return;
+          setRuns(prev => [hit, ...prev.filter(r => r.id !== hit.id)].sort((a, b) => b.id - a.id).slice(0, 100));
+          if (selectedRef.current === entry.workflowId) setResult(prev => !prev || prev.id === hit.id ? hit : prev);
+          if (hit.status === "running") return;
+          setPending(prev => { const next = { ...prev }; delete next[hit.id]; return next; });
+          if (selectedRef.current === entry.workflowId) void loadHistory(entry.workflowId);
+          notification[hit.status === "success" ? "success" : "error"]({ key: `workflow-${id}`, title: `${entry.name} · ${statusLabels[hit.status] || hit.status}`, description: `运行 #${id} · 耗时 ${fmtDuration(hit.duration_ms)}`, placement: "topRight" });
+          void refresh().catch(() => {});
+        } catch { /* 下一轮继续跟踪，页面同步状态单独提示连接异常。 */ }
+      }));
+      busy = false;
+    };
+    void tick();
+    const timer = setInterval(tick, 2000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [pending, loadHistory, notification, refresh]);
 
-          const steps = hit.steps || [];
-          setResult({
-            runId,
-            status: hit.status,
-            durationMs: hit.duration_ms,
-            steps,
-          });
-          setRunLog((prev) =>
-            prev.map((r) =>
-              r.id === runId
-                ? { ...r, status: hit.status, duration_ms: hit.duration_ms, started_at: hit.started_at }
-                : r
-            )
-          );
-          setWorkflows((prev) =>
-            prev.map((w) =>
-              w.id === wf.id ? { ...w, lastRunAt: hit.started_at, lastRunStatus: hit.status } : w
-            )
-          );
-          void reloadDrawerRuns(wf.id);
-          refresh();
+  const filtered = useMemo(() => workflows.filter(w => {
+    const text = `${w.displayName} ${w.name} ${w.description}`.toLowerCase();
+    return text.includes(search.trim().toLowerCase()) && (status === "all" || (w.lastRunStatus || "idle") === status) && (scope === "all" || (w.visibility || "public") === scope);
+  }).sort((a, b) => sort === "recent" ? (b.lastRunAt || "").localeCompare(a.lastRunAt || "") : sort === "popular" ? b.runCount - a.runCount : a.displayName.localeCompare(b.displayName, "zh-CN")), [workflows, search, status, scope, sort]);
+  const active = selected && (submittingId === selected.id || Object.values(pending).some(p => p.workflowId === selected.id) || runs.some(r => r.workflow_id === selected.id && r.status === "running"));
 
-          const failedStep = steps.find((s) => s.status === "failed");
-          if (hit.status === "success") {
-            notification.success({
-              key: `wf-run-${runId}`,
-              message: `工作流「${wf.displayName || wf.name}」执行成功`,
-              description: `总耗时 ${fmtDuration(hit.duration_ms)} · ${steps.length} 个步骤`,
-              placement: "top",
-              duration: 4.5,
-            });
-          } else {
-            notification.error({
-              key: `wf-run-${runId}`,
-              message: `工作流「${wf.displayName || wf.name}」执行失败`,
-              description: failedStep?.error || "存在失败步骤，详情见抽屉运行结果",
-              placement: "top",
-              duration: 8,
-            });
-          }
-        } catch {
-          /* 单次轮询失败静默重试 */
-        }
-      }, 2000);
-    } catch (e) {
-      setRunning(false);
-      message.error((e as Error).message);
-    }
+  async function manualRefresh() {
+    setRefreshing(true);
+    try { await refresh(); if (selectedRef.current != null) await loadHistory(selectedRef.current); } catch (e) { setError((e as Error).message); } finally { setRefreshing(false); }
+  }
+  async function run(values: Record<string, string>) {
+    if (!selected || submitLock.current || active) return;
+    submitLock.current = true;
+    const workflow = selected;
+    setSubmittingId(workflow.id);
+    try {
+      const data = await request<{ runId: number }>(`/api/workflows/${workflow.id}/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ params: values, async: true }) });
+      if (!mounted.current) return;
+      setPending(prev => ({ ...prev, [data.runId]: { workflowId: workflow.id, name: workflow.displayName } }));
+      const record: RunSummary = { id: data.runId, workflow_id: workflow.id, workflow_name: workflow.name, status: "running", duration_ms: null, triggered_by: "我", started_at: new Date().toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" }), steps: [] };
+      setRuns(prev => [record, ...prev]);
+      if (selectedRef.current === workflow.id) { setResult(record); setTab("logs"); }
+      message.success("已开始运行，可切换工作流，完成后会通知你");
+    } catch (e) { message.error((e as Error).message); } finally { submitLock.current = false; if (mounted.current) setSubmittingId(null); }
+  }
+  function showRun(record: RunSummary) {
+    setResult(record);
+    setTab("logs");
+    if (record.status === "running") setPending(prev => ({ ...prev, [record.id]: { workflowId: record.workflow_id, name: selected?.displayName || record.workflow_name } }));
   }
 
-  return (
-    <div style={{ display: "grid", gap: 16 }}>
-      {/* 页头 */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <Space>
-          <Avatar shape="square" size={36} style={{ background: "#eaf0f6", color: "#345d88", fontSize: 18 }}>
-            <ApartmentOutlined />
-          </Avatar>
-          <div>
-            <Typography.Title level={4} style={{ margin: 0 }}>
-              工作流
-            </Typography.Title>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {workflows.length} 个工作流 · {totalSteps} 个步骤
-            </Typography.Text>
-          </div>
-        </Space>
-      </div>
-
-      {/* 工作流卡片 */}
-      {workflows.length === 0 ? (
-        <Card style={{ borderRadius: 8 }}>
-          <Empty
-            description="暂无工作流，请在管理后台添加。"
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-          />
-        </Card>
-      ) : (
-        <Row gutter={[16, 16]} align="stretch">
-          {workflows.map((w) => (
-            <Col xs={24} sm={12} lg={8} key={w.id} style={{ display: "flex" }}>
-              <Card
-                hoverable
-                style={{ height: "100%", borderRadius: 8, borderColor: "#e2e7ec" }}
-                onClick={() => openWorkflow(w)}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <Avatar size={44} style={{ background: gradient(w.color), fontSize: 20 }}>
-                    <ApartmentOutlined />
-                  </Avatar>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {w.displayName}
-                    </div>
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {w.name} · v{w.version}
-                    </Typography.Text>
-                  </div>
-                  <Space
-                    size={4}
-                    style={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: "55%" }}
-                  >
-                    <Tag color={w.color} style={{ margin: 0 }}>
-                      {w.stepCount} 步
-                    </Tag>
-                    <VisibilityTag value={w.visibility} style={{ margin: 0 }} />
-                    <SourceTag source={w.source} />
-                  </Space>
-                </div>
-                <p
-                  style={{
-                    margin: "12px 0 0",
-                    fontSize: 12,
-                    color: "#595959",
-                    height: 36,
-                    overflow: "hidden",
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
-                  }}
-                >
-                  {w.description || "暂无描述"}
-                </p>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 4,
-                    flexWrap: "wrap",
-                    marginTop: 10,
-                  }}
-                >
-                  {w.steps.slice(0, 5).map((s) => (
-                    <Tag
-                      key={s.id}
-                      style={{
-                        margin: 0,
-                        fontSize: 10,
-                        borderRadius: 4,
-                        padding: "0 6px",
-                        lineHeight: "18px",
-                      }}
-                      color={STEP_META[s.type]?.color}
-                    >
-                      {STEP_META[s.type]?.label || s.type}
-                    </Tag>
-                  ))}
-                  {w.steps.length > 5 && (
-                    <Tag style={{ margin: 0, fontSize: 10 }}>+{w.steps.length - 5}</Tag>
-                  )}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginTop: 12,
-                  }}
-                >
-                  <Space size={8} style={{ fontSize: 11, color: "#8c8c8c" }}>
-                    {w.params.length > 0 && <span>{w.params.length} 个参数</span>}
-                    <span>已执行 {w.runCount} 次</span>
-                  </Space>
-                  {w.lastRunStatus ? (
-                    w.lastRunStatus === "success" ? (
-                      <Tag icon={<CheckCircleFilled />} color="success" style={{ margin: 0 }}>
-                        最近成功
-                      </Tag>
-                    ) : (
-                      <Tag icon={<CloseCircleFilled />} color="error" style={{ margin: 0 }}>
-                        最近失败
-                      </Tag>
-                    )
-                  ) : (
-                    <Tag icon={<ClockCircleOutlined />} style={{ margin: 0 }}>
-                      未执行
-                    </Tag>
-                  )}
-                </div>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      )}
-
-      {/* 最近运行 */}
-      <Card
-        style={{ borderRadius: 8 }}
-        title={
-          <Space>
-            <HistoryOutlined style={{ color: MODULE_COLOR }} />
-            <span>最近运行</span>
-          </Space>
-        }
-      >
-        {runLog.length === 0 ? (
-          <Empty description="还没有运行记录，点开一个工作流试试" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        ) : (
-          <div style={{ display: "grid" }}>
-            {runLog.map((r) => (
-              <div
-                key={r.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "8px 6px",
-                  borderBottom: "1px solid #f0f0f0",
-                }}
-              >
-                <RunStatusIcon status={r.status} />
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  {r.workflow_name}
-                </Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {fmtDuration(r.duration_ms)}
-                </Typography.Text>
-                <span style={{ flex: 1 }} />
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {r.triggered_by || "-"}
-                </Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 12, minWidth: 86, textAlign: "right" }}>
-                  {fmtTime(r.started_at)}
-                </Typography.Text>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {/* 详情抽屉 */}
-      <Drawer
-        open={!!selected}
-        onClose={() => setSelected(null)}
-        width={680}
-        title={
-          selected ? (
-            <Space>
-              <Avatar size={30} style={{ background: gradient(selected.color), fontSize: 14 }}>
-                <ApartmentOutlined />
-              </Avatar>
-              <span>{selected.displayName}</span>
-              <Typography.Text type="secondary" copyable style={{ fontSize: 12 }}>
-                {selected.name}
-              </Typography.Text>
-            </Space>
-          ) : null
-        }
-      >
-        {selected && (
-          <div style={{ display: "grid", gap: 4 }}>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 12, fontSize: 13 }}>
-              {selected.description || "暂无描述"}
-            </Typography.Paragraph>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-              <Tag color={selected.color}>{selected.stepCount} 个步骤</Tag>
-              <VisibilityTag value={selected.visibility} />
-              <SourceTag source={selected.source} />
-              {selected.params.length > 0 && <Tag>{selected.params.length} 个参数</Tag>}
-              <Tag>版本 v{selected.version}</Tag>
-              <Tag>已执行 {selected.runCount} 次</Tag>
-              {selected.lastRunAt && <Tag icon={<ClockCircleOutlined />}>上次 {fmtTime(selected.lastRunAt)}</Tag>}
-            </div>
-
-            {/* 流程概览 */}
-            <Typography.Title level={5} style={{ marginTop: 0 }}>
-              流程
-            </Typography.Title>
-            <div style={{ display: "grid", gap: 6, marginBottom: 20 }}>
-              {selected.steps.map((s, i) => {
-                const meta = STEP_META[s.type];
-                return (
-                  <div
-                    key={s.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "8px 12px",
-                      borderRadius: 8,
-                      background: "#fafafa",
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: "50%",
-                        background: meta?.color || "#8c8c8c",
-                        color: "#fff",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 11,
-                        fontWeight: 600,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {i + 1}
-                    </span>
-                    <Typography.Text strong style={{ fontSize: 13 }}>
-                      {s.name}
-                    </Typography.Text>
-                    <Tag
-                      color={meta?.color}
-                      style={{ margin: 0, fontSize: 10, borderRadius: 4, padding: "0 6px", lineHeight: "18px" }}
-                    >
-                      {meta?.label || s.type}
-                    </Tag>
-                    <span style={{ flex: 1 }} />
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {s.id}
-                    </Typography.Text>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* 执行区 */}
-            <Typography.Title level={5} style={{ marginTop: 0 }}>
-              运行
-            </Typography.Title>
-            {selected.params.length === 0 ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                该工作流无需参数，直接运行即可。
-              </Typography.Text>
-            ) : (
-              <Form form={form} layout="vertical">
-                {selected.params.map((p: SkillParam) => (
-                  <Form.Item
-                    key={p.name}
-                    name={p.name}
-                    label={
-                      <Space size={6}>
-                        <span>{p.label || p.name}</span>
-                        {p.required && (
-                          <Tag color="red" style={{ margin: 0, fontSize: 10 }}>
-                            必填
-                          </Tag>
-                        )}
-                      </Space>
-                    }
-                    extra={p.description}
-                    style={{ marginBottom: 12 }}
-                  >
-                    {p.multiline ? (
-                      <Input.TextArea rows={3} placeholder={`输入 ${p.label || p.name}`} />
-                    ) : (
-                      <Input placeholder={p.default || `输入 ${p.label || p.name}`} allowClear />
-                    )}
-                  </Form.Item>
-                ))}
-              </Form>
-            )}
-            <Button
-              type="primary"
-              icon={<PlayCircleFilled />}
-              loading={running}
-              onClick={doRun}
-              size="large"
-              block
-            >
-              运行工作流
-            </Button>
-
-            {/* 运行结果：逐步时间线 */}
-            {result && (
-              <Card size="small" style={{ marginTop: 16, borderRadius: 10, background: "#fafafa" }}>
-                <Space style={{ marginBottom: 8 }}>
-                  <Tag color={result.status === "success" ? "success" : "error"}>
-                    {result.status === "success" ? "成功" : "失败"}
-                  </Tag>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    总耗时 {fmtDuration(result.durationMs)} · {result.steps.length} 个步骤
-                  </Typography.Text>
-                </Space>
-                <Collapse
-                  size="small"
-                  defaultActiveKey={result.steps.map((s) => s.stepId)}
-                  items={result.steps.map((s) => {
-                    const meta = STEP_META[s.type];
-                    return {
-                      key: s.stepId,
-                      label: (
-                        <Space size={8}>
-                          {s.status === "success" ? (
-                            <CheckCircleFilled style={{ color: "#52c41a", fontSize: 14 }} />
-                          ) : s.status === "failed" ? (
-                            <CloseCircleFilled style={{ color: "#ff4d4f", fontSize: 14 }} />
-                          ) : (
-                            <MinusCircleFilled style={{ color: "#bfbfbf", fontSize: 14 }} />
-                          )}
-                          <Typography.Text strong style={{ fontSize: 12 }}>
-                            {s.name}
-                          </Typography.Text>
-                          <Tag
-                            color={meta?.color}
-                            style={{ margin: 0, fontSize: 10, borderRadius: 4, padding: "0 5px", lineHeight: "16px" }}
-                          >
-                            {meta?.label || s.type}
-                          </Tag>
-                          {s.durationMs > 0 && (
-                            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                              {fmtDuration(s.durationMs)}
-                            </Typography.Text>
-                          )}
-                          {s.status === "skipped" && (
-                            <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                              已跳过
-                            </Typography.Text>
-                          )}
-                        </Space>
-                      ),
-                      children: (
-                        <div>
-                          {s.error ? (
-                            <div
-                              style={{
-                                color: "#ff4d4f",
-                                marginBottom: s.output ? 8 : 0,
-                                fontSize: 12,
-                              }}
-                            >
-                              ✗ {s.error}
-                            </div>
-                          ) : null}
-                          {s.output ? (
-                            <RunOutput output={s.output} maxHeight={320} />
-                          ) : (
-                            !s.error && (
-                              <Typography.Text type="secondary">（无输出）</Typography.Text>
-                            )
-                          )}
-                        </div>
-                      ),
-                    };
-                  })}
-                />
-              </Card>
-            )}
-
-            {/* 运行历史 */}
-            <Typography.Title level={5} style={{ marginTop: 24 }}>
-              运行历史
-            </Typography.Title>
-            {runsLoading ? (
-              <div style={{ textAlign: "center", padding: 24, color: "#8c8c8c" }}>
-                <LoadingOutlined style={{ fontSize: 18, marginRight: 8 }} />
-                加载中…
-              </div>
-            ) : drawerRuns.length === 0 ? (
-              <Empty description="暂无运行记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            ) : (
-              <div style={{ display: "grid" }}>
-                {drawerRuns.map((r) => (
-                  <div
-                    key={r.id}
-                    onClick={() =>
-                      setResult({
-                        runId: r.id,
-                        status: r.status,
-                        durationMs: r.duration_ms,
-                        steps: r.steps || [],
-                      })
-                    }
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "8px 6px",
-                      borderBottom: "1px solid #f0f0f0",
-                      cursor: "pointer",
-                      borderRadius: 6,
-                    }}
-                  >
-                    <RunStatusIcon status={r.status} />
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {fmtTime(r.started_at)}
-                    </Typography.Text>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {fmtDuration(r.duration_ms)}
-                    </Typography.Text>
-                    <span style={{ flex: 1 }} />
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {r.triggered_by || "-"}
-                    </Typography.Text>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 定义查看 */}
-            <Collapse
-              ghost
-              style={{ marginTop: 16 }}
-              items={[
-                {
-                  key: "src",
-                  label: (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      查看 YAML 定义
-                    </Typography.Text>
-                  ),
-                  children: <YamlBlock source={selected.sourceText || ""} maxHeight={320} />,
-                },
-              ]}
-            />
-          </div>
-        )}
-      </Drawer>
+  return <div className="wf-workspace">
+    <header className="wf-heading"><div><span className="wf-eyebrow">自动化 / 工作流</span><h1>工作流</h1><p>串联技能与工具，让重复的工作按步骤完成。</p></div><Button icon={<ReloadOutlined />} loading={refreshing} onClick={manualRefresh}>刷新</Button></header>
+    <div className="wf-summary" aria-label="工作流概况">
+      <div><span>可用工作流</span><strong>{workflows.length}</strong></div>
+      <div><span>流程步骤</span><strong>{workflows.reduce((sum, w) => sum + w.stepCount, 0)}</strong></div>
+      <div><span>最近运行中</span><strong>{runs.filter(r => r.status === "running").length}</strong></div>
+      <div><span>最近失败</span><strong className={runs.some(r => r.status === "failed") ? "wf-danger" : ""}>{runs.filter(r => r.status === "failed").length}</strong></div>
     </div>
-  );
+    {error && <Alert type="warning" showIcon title={error} action={<Button size="small" onClick={manualRefresh} loading={refreshing}>重试</Button>} />}
+    <div className="wf-layout">
+      <aside className="wf-catalog" aria-label="工作流目录">
+        <div className="wf-catalog-tools"><div className="wf-section-heading"><h2>工作流目录</h2><span>{filtered.length} / {workflows.length}</span></div>
+          <Input prefix={<SearchOutlined />} placeholder="搜索名称、描述" aria-label="搜索工作流" value={search} allowClear onChange={e => setSearch(e.target.value)} />
+          <div className="wf-filters"><Select aria-label="运行状态筛选" value={status} onChange={setStatus} options={[{ value: "all", label: "全部状态" }, ...["idle", "running", "success", "failed"].map(value => ({ value, label: statusLabels[value] }))]} /><Select aria-label="可见范围筛选" value={scope} onChange={setScope} options={[{ value: "all", label: "全部范围" }, { value: "public", label: "通用工作流" }, { value: "personal", label: "个人工作流" }]} /></div>
+          <Select className="wf-sort" aria-label="工作流排序" value={sort} onChange={setSort} options={[{ value: "name", label: "按名称排序" }, { value: "recent", label: "最近运行优先" }, { value: "popular", label: "运行次数优先" }]} />
+        </div>
+        <div className="wf-catalog-list">{filtered.map(w => <button type="button" key={w.id} className={`wf-catalog-item ${w.id === selectedId ? "is-selected" : ""}`} aria-pressed={w.id === selectedId} onClick={() => setSelectedId(w.id)}><div className="wf-item-title"><ApartmentOutlined /><strong>{w.displayName}</strong><Status status={w.lastRunStatus} /></div><p>{w.description || "暂无描述"}</p><div className="wf-item-meta"><span>{w.stepCount} 步 · {w.params.length} 个参数</span><span>已运行 {w.runCount} 次</span></div></button>)}
+          {!filtered.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={workflows.length ? "没有符合条件的工作流" : "暂无工作流，请在管理后台添加"}>{workflows.length > 0 && <Button onClick={() => { setSearch(""); setStatus("all"); setScope("all"); }}>清除筛选</Button>}</Empty>}
+        </div>
+      </aside>
+      <section className="wf-detail" aria-label="工作流工作区">
+        {!selected ? <Empty description="选择工作流，查看步骤并开始运行" /> : <>
+          <div className="wf-detail-heading"><div className="wf-section-heading"><div><span className="wf-eyebrow">{selected.name} · v{selected.version}</span><h2>{selected.displayName}</h2></div><Space wrap><VisibilityTag value={selected.visibility} /><SourceTag source={selected.source} /></Space></div><p>{selected.description || "暂无描述"}</p><span className="wf-caption">上次运行 {fmtTime(selected.lastRunAt)} · 累计 {selected.runCount} 次</span></div>
+          <Tabs activeKey={tab} onChange={setTab} items={[
+            { key: "run", label: "流程与运行", children: <div className="wf-execution"><section><div className="wf-section-heading"><h3>执行步骤</h3><span>按顺序执行 · {selected.stepCount} 步</span></div><ol className="wf-steps">{selected.steps.map((step, index) => <li key={step.id}><span className="wf-step-number">{index + 1}</span><div><strong>{step.name}</strong><code>{step.id}</code></div><Tag icon={STEP_META[step.type]?.icon} color={STEP_META[step.type]?.color}>{STEP_META[step.type]?.label || step.type}</Tag></li>)}</ol>{!selected.steps.length && <Empty description="尚未配置步骤" image={Empty.PRESENTED_IMAGE_SIMPLE} />}</section><section className="wf-parameters"><h3>运行参数</h3><p>确认输入后开始执行。</p><Form key={selected.id} form={form} layout="vertical" initialValues={Object.fromEntries(selected.params.map(p => [p.name, p.default ?? ""]))} onFinish={run} disabled={!!active}>
+              {!selected.params.length && <div className="wf-no-params"><ThunderboltFilled /><span>无需填写参数，可以直接运行。</span></div>}
+              {selected.params.map(p => <Form.Item key={p.name} name={p.name} label={p.label || p.name} extra={p.description} rules={[{ required: p.required, whitespace: true, message: `请输入${p.label || p.name}` }]}>{p.multiline ? <Input.TextArea rows={3} placeholder={`输入${p.label || p.name}`} /> : <Input allowClear placeholder={`输入${p.label || p.name}`} />}</Form.Item>)}
+              <Button type="primary" htmlType="submit" block size="large" icon={<PlayCircleFilled />} loading={submittingId === selected.id} disabled={!!active || !selected.stepCount}>{active ? "运行中" : "运行工作流"}</Button>
+              <Button className="wf-reset" type="text" block onClick={() => form.resetFields()} disabled={!!active}>恢复默认参数</Button>
+            </Form><span className="wf-caption">步骤失败时停止执行，后续步骤会标记为跳过。</span></section></div> },
+            { key: "logs", label: "运行日志", children: <div className="wf-tab-body">{!result ? <Empty description="运行工作流或从运行历史中选择一条记录" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : <><div className="wf-section-heading"><Space wrap><h3>运行 #{result.id}</h3><Status status={result.status} /></Space><span>{fmtDuration(result.duration_ms)}</span></div>{result.status === "running" && <Alert showIcon type="info" title="正在后台执行，结果会自动更新" description="可继续浏览其他工作流，完成后将收到通知。" />}<StepResults steps={result.steps || []} />{result.status !== "running" && !result.steps?.length && <Empty description="本次运行没有步骤日志" image={Empty.PRESENTED_IMAGE_SIMPLE} />}</>}</div> },
+            { key: "history", label: "运行历史", children: <div className="wf-tab-body">{historyError && <Alert type="error" title={historyError} action={<Button onClick={() => loadHistory(selected.id)}>重试</Button>} />}<Spin spinning={loading}><RunTable runs={history} onOpen={showRun} /></Spin><p className="wf-caption">展示该工作流最近 10 次运行，点击记录查看逐步输出。</p></div> },
+            { key: "definition", label: "流程定义", children: <div className="wf-tab-body">{selected.sourceText ? <YamlBlock source={selected.sourceText} maxHeight={600} /> : <Empty description="此工作流未保存 YAML 原文" image={Empty.PRESENTED_IMAGE_SIMPLE} />}</div> },
+          ]} />
+        </>}
+      </section>
+    </div>
+    <section className="wf-recent"><div className="wf-section-heading"><h2>最近运行</h2><span>最近 {runs.length} 条记录 · 每 10 秒同步</span></div><RunTable runs={runs} onOpen={record => { if (record.workflow_id === selectedId) showRun(record); else { requestedRun.current = record; setSelectedId(record.workflow_id); } }} /></section>
+  </div>;
+}
+
+function RunTable({ runs, onOpen }: { runs: RunSummary[]; onOpen: (run: RunSummary) => void }) {
+  return <Table<RunSummary> rowKey="id" size="small" dataSource={runs} scroll={{ x: 620 }} pagination={runs.length > 8 ? { defaultPageSize: 8, showSizeChanger: false } : false} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运行记录" /> }} columns={[
+    { title: "运行", key: "name", render: (_, r) => <Button type="link" onClick={() => onOpen(r)}>#{r.id} · {r.workflow_name}</Button> },
+    { title: "状态", key: "status", render: (_, r) => <Status status={r.status} /> },
+    { title: "耗时", key: "duration", render: (_, r) => fmtDuration(r.duration_ms) },
+    { title: "触发人", dataIndex: "triggered_by", render: v => v || "—" },
+    { title: "开始时间", dataIndex: "started_at", render: fmtTime },
+  ]} />;
+}
+function StepResults({ steps }: { steps: StepLog[] }) {
+  return <Collapse className="wf-step-results" items={steps.map(s => ({ key: s.stepId, label: <Space wrap><Status status={s.status} /><strong>{s.name}</strong><span>{fmtDuration(s.durationMs)}</span></Space>, children: <>{s.error && <Alert type="error" showIcon title={s.error} />}{s.output ? <RunOutput output={s.output} maxHeight={360} /> : <p className="wf-caption">{s.status === "skipped" ? "前序步骤失败，本步骤未执行。" : "无输出"}</p>}</> }))} />;
 }

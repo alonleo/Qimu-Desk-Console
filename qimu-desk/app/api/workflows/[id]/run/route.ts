@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser, assertOrigin, jsonError, readJson } from "@/core/api";
-import { runWorkflow, startWorkflowRun } from "@/core/workflows";
+import { runWorkflow, startWorkflowRun, getWorkflowDetail } from "@/core/workflows";
+
+import { canReadRow } from "@/core/visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +34,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const baseUrl = host ? `${proto}://${host}` : undefined;
 
   try {
+    const detail = await getWorkflowDetail(workflowId);
+    if (!detail || !canReadRow(user, detail.workflow)) return jsonError("工作流不存在", 404);
     if (body.async === true) {
       const { runId } = await startWorkflowRun(workflowId, body.params || {}, user.username, baseUrl);
       return NextResponse.json({ runId, status: "running", async: true }, { status: 202 });
