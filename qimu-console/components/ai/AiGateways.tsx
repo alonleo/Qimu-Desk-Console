@@ -20,6 +20,9 @@ export type AiGatewayDto = {
   api_key: string;
   model: string;
   temperature: number;
+  max_input_tokens: number;
+  max_output_tokens: number;
+  timeout_seconds: number;
   enabled: boolean;
   is_default: boolean;
   updated_at: string | null;
@@ -32,6 +35,9 @@ type FormValues = {
   api_key?: string;
   model: string;
   temperature: number;
+  max_input_tokens: number;
+  max_output_tokens: number;
+  timeout_seconds: number;
   enabled: boolean;
 };
 
@@ -116,7 +122,7 @@ export default function AiGateways({ gateways }: { gateways: AiGatewayDto[] }) {
   function openCreate() {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ provider: "openai-compatible", temperature: 0.7, enabled: false, base_url: "", model: "" });
+    form.setFieldsValue({ provider: "openai-compatible", temperature: 0.7, max_input_tokens: 0, max_output_tokens: 0, timeout_seconds: 0, enabled: false, base_url: "", model: "" });
     setOpen(true);
   }
 
@@ -129,6 +135,9 @@ export default function AiGateways({ gateways }: { gateways: AiGatewayDto[] }) {
       api_key: g.api_key || "",
       model: g.model,
       temperature: g.temperature,
+      max_input_tokens: g.max_input_tokens || 0,
+      max_output_tokens: g.max_output_tokens || 0,
+      timeout_seconds: g.timeout_seconds || 0,
       enabled: g.enabled,
     });
     setOpen(true);
@@ -142,6 +151,9 @@ export default function AiGateways({ gateways }: { gateways: AiGatewayDto[] }) {
       api_key: values.api_key,
       model: values.model.trim(),
       temperature: values.temperature,
+      max_input_tokens: values.max_input_tokens || 0,
+      max_output_tokens: values.max_output_tokens || 0,
+      timeout_seconds: values.timeout_seconds || 0,
       enabled: values.enabled,
     };
     const ok = editing
@@ -246,6 +258,9 @@ export default function AiGateways({ gateways }: { gateways: AiGatewayDto[] }) {
           fields={[
             { key: "enabled", label: "启用状态", type: "switch", checkedText: "启用", uncheckedText: "停用" },
             { key: "temperature", label: "Temperature", type: "number", min: 0, max: 2, step: 0.1 },
+            { key: "max_input_tokens", label: "输入上限（估算 tokens，0 自动）", type: "number", min: 0, max: 2000000, step: 1 },
+            { key: "max_output_tokens", label: "最大输出 tokens（0 自动）", type: "number", min: 0, max: 262144, step: 1 },
+            { key: "timeout_seconds", label: "超时秒数（0 自动）", type: "number", min: 0, max: 600, step: 1 },
             { key: "provider", label: "服务商", type: "text", placeholder: "openai-compatible" },
             { key: "model", label: "模型", type: "text", placeholder: "如 deepseek-chat" },
             { key: "base_url", label: "Base URL", type: "text", placeholder: "https://api.example.com/v1" },
@@ -322,6 +337,10 @@ export default function AiGateways({ gateways }: { gateways: AiGatewayDto[] }) {
               <Switch checkedChildren="启用" unCheckedChildren="停用" />
             </Form.Item>
           </Space>
+          <Typography.Paragraph type="secondary">0 表示自动；输入采用保守文本估算，超过预算会提示，不会默默截断。最大输出包含思考内容。</Typography.Paragraph>
+          <Form.Item name="max_input_tokens" label="输入上下文上限（估算 tokens）" initialValue={0} rules={[{ required: true, type: "integer", min: 0, max: 2000000 }]}><InputNumber min={0} max={2000000} precision={0} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item name="max_output_tokens" label="最大输出 tokens" initialValue={0} extra="MiniMax 自动值为 16384；手动填写后优先使用该值。" rules={[{ required: true, type: "integer", min: 0, max: 262144 }]}><InputNumber min={0} max={262144} precision={0} style={{ width: "100%" }} /></Form.Item>
+          <Form.Item name="timeout_seconds" label="请求超时（秒）" initialValue={0} extra="MiniMax 自动值为 240 秒。" rules={[{ required: true, type: "integer", min: 0, max: 600 }]}><InputNumber min={0} max={600} precision={0} style={{ width: "100%" }} /></Form.Item>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Button
               onClick={() => {
