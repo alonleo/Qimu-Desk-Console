@@ -333,3 +333,9 @@ CREATE TABLE IF NOT EXISTS sys_logininfor (
   INDEX idx_sys_logininfor_time (login_time),
   INDEX idx_sys_logininfor_user (user_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 共享知识标签目录：未关联文档的新标签也持久保留。
+CREATE TABLE IF NOT EXISTS knowledge_tags (
+  name VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -3,6 +3,10 @@ package com.alon.admin.controller;
 import com.alon.admin.common.BatchOps;
 import com.alon.admin.common.VisibilityPolicy;
 import com.alon.admin.entity.Category;
+import com.alon.admin.service.KnowledgeTagService;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 import com.alon.admin.entity.Doc;
 import com.alon.admin.entity.User;
 import com.alon.admin.mapper.CategoryMapper;
@@ -29,11 +33,13 @@ public class KnowledgeController {
     private final DocMapper docMapper;
     private final CategoryMapper categoryMapper;
     private final UserMapper userMapper;
+    private final KnowledgeTagService tagService;
 
-    public KnowledgeController(DocMapper docMapper, CategoryMapper categoryMapper, UserMapper userMapper) {
+    public KnowledgeController(DocMapper docMapper, CategoryMapper categoryMapper, UserMapper userMapper, KnowledgeTagService tagService) {
         this.docMapper = docMapper;
         this.categoryMapper = categoryMapper;
         this.userMapper = userMapper;
+        this.tagService = tagService;
     }
 
     // —— 文档 ——
@@ -69,7 +75,7 @@ public class KnowledgeController {
                 .filter(d -> tag == null || tag.isBlank() || Arrays.asList(splitTags(d.getTags())).contains(tag))
                 .map(d -> toDocItem(d, q, ownerNames))
                 .collect(Collectors.toList());
-        return Map.of("docs", items, "categories", listCategories(), "tags", listTags());
+        return Map.of("docs", items, "categories", listCategories(), "tags", tagService.list(user));
     }
 
     /** 详情：member 访问他人 personal 条目 → 403 + {"error":"无权访问"} */
@@ -221,9 +227,11 @@ public class KnowledgeController {
     }
 
     @PostMapping("/categories")
-    public Map<String, Object> createCategory(@RequestBody Map<String, Object> body) {
-        String name = body.getOrDefault("name", "").toString().trim();
+    public Map<String, Object> createCategory(@RequestBody Map<String, Object> body, HttpServletRequest req) {
+        requireTaxonomyAdmin(req);
+        String name = body.get("name") instanceof String value ? value.trim() : "";
         if (name.isBlank()) return Map.of("error", "分类名不能为空");
+        if ("all".equalsIgnoreCase(name) || name.chars().anyMatch(Character::isISOControl)) return Map.of("error", "分类名不能为 all 或包含控制字符");
         if (name.length() > 30) return Map.of("error", "分类名过长（最多 30 字）");
         if (categoryMapper.selectCount(Wrappers.<Category>lambdaQuery().eq(Category::getName, name)) > 0) {
             return Map.of("error", "分类「" + name + "」已存在");
@@ -235,10 +243,13 @@ public class KnowledgeController {
         return Map.of("ok", true, "category", Map.of("id", c.getId(), "name", c.getName()));
     }
 
+    @Transactional
     @PatchMapping("/categories/{id}")
-    public Map<String, Object> renameCategory(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        String name = body.getOrDefault("name", "").toString().trim();
+    public Map<String, Object> renameCategory(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpServletRequest req) {
+        requireTaxonomyAdmin(req);
+        String name = body.get("name") instanceof String value ? value.trim() : "";
         if (name.isBlank()) return Map.of("error", "分类名不能为空");
+        if ("all".equalsIgnoreCase(name) || name.chars().anyMatch(Character::isISOControl)) return Map.of("error", "分类名不能为 all 或包含控制字符");
         if (name.length() > 30) return Map.of("error", "分类名过长（最多 30 字）");
         Category c = categoryMapper.selectById(id);
         if (c == null) return Map.of("error", "分类不存在");
@@ -246,6 +257,7 @@ public class KnowledgeController {
         if (categoryMapper.selectCount(Wrappers.<Category>lambdaQuery().eq(Category::getName, name).ne(Category::getId, id)) > 0) {
             return Map.of("error", "分类「" + name + "」已存在");
         }
+        if ("未分类".equals(c.getName())) return Map.of("error", "「未分类」是系统默认分类，不能重命名");
         String oldName = c.getName();
         c.setName(name);
         categoryMapper.updateById(c);
@@ -255,14 +267,29 @@ public class KnowledgeController {
         return Map.of("ok", true, "category", Map.of("id", c.getId(), "name", c.getName()));
     }
 
+    @Transactional
     @DeleteMapping("/categories/{id}")
-    public Map<String, Object> deleteCategory(@PathVariable Long id) {
+    public Map<String, Object> deleteCategory(@PathVariable Long id, HttpServletRequest req) {
+        requireTaxonomyAdmin(req);
         Category c = categoryMapper.selectById(id);
         if (c == null) return Map.of("error", "分类不存在");
-        if ("未分类".equals(c.getName())) return Map.of("error", "「未分类」是系统默认分类，不能删除");
+        return deleteCategoryName(c.getName());
+    }
+
+    /** 按名称兼容文档中存在、但尚未登记到分类表的历史分类。 */
+    @Transactional
+    @DeleteMapping("/categories")
+    public Map<String, Object> deleteCategoryByName(@RequestParam String name, HttpServletRequest req) {
+        requireTaxonomyAdmin(req);
+        if (name.isBlank()) return Map.of("error", "分类名不能为空");
+        return deleteCategoryName(name.trim());
+    }
+
+    private Map<String, Object> deleteCategoryName(String name) {
+        if ("未分类".equals(name)) return Map.of("error", "「未分类」是系统默认分类，不能删除");
         int moved = docMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Doc>()
-                .eq(Doc::getCategory, c.getName()).set(Doc::getCategory, "未分类"));
-        categoryMapper.deleteById(id);
+                .eq(Doc::getCategory, name).set(Doc::getCategory, "未分类"));
+        categoryMapper.delete(Wrappers.<Category>lambdaQuery().eq(Category::getName, name));
         return Map.of("ok", true, "moved", moved);
     }
 
@@ -270,7 +297,8 @@ public class KnowledgeController {
 
     /** 分类批量创建：{items: [{name}, ...]}（已存在的自动跳过） */
     @PostMapping("/categories/batch-create")
-    public Map<String, Object> batchCreateCategories(@RequestBody Map<String, Object> body) {
+    public Map<String, Object> batchCreateCategories(@RequestBody Map<String, Object> body, HttpServletRequest req) {
+        requireTaxonomyAdmin(req);
         if (!(body.get("items") instanceof List<?> items) || items.isEmpty()) {
             return Map.of("error", "items 不能为空");
         }
@@ -282,6 +310,10 @@ public class KnowledgeController {
             String name = rawName == null ? "" : rawName.toString().trim();
             if (name.isBlank()) {
                 errors.add(BatchOps.itemError("index", i, "分类名不能为空"));
+                continue;
+            }
+            if ("all".equalsIgnoreCase(name) || name.chars().anyMatch(Character::isISOControl)) {
+                errors.add(BatchOps.itemError("index", i, "分类名不能为 all 或包含控制字符"));
                 continue;
             }
             if (name.length() > 30) {
@@ -302,8 +334,10 @@ public class KnowledgeController {
     }
 
     /** 分类批量删除：{ids: []}（「未分类」自动跳过，其余分类下文档移回未分类） */
+    @Transactional
     @PostMapping("/categories/batch-delete")
-    public Map<String, Object> batchDeleteCategories(@RequestBody Map<String, Object> body) {
+    public Map<String, Object> batchDeleteCategories(@RequestBody Map<String, Object> body, HttpServletRequest req) {
+        requireTaxonomyAdmin(req);
         List<Long> ids = BatchOps.parseIds(body.get("ids"));
         if (ids.isEmpty()) return Map.of("error", "ids 不能为空");
         List<Map<String, Object>> errors = new ArrayList<>();
@@ -348,18 +382,10 @@ public class KnowledgeController {
         }).toList();
     }
 
-    private List<Map<String, Object>> listTags() {
-        // 一次把含 tags 的文档取回（仅 category+tags 两列），按逗号拆分统计；避免全表拉取 content
-        Map<String, Long> counter = new TreeMap<>();
-        for (Map<String, Object> row : docMapper.selectMaps(
-                new QueryWrapper<Doc>().select("tags").isNotNull("tags").ne("tags", ""))) {
-            Object tags = row.get("tags");
-            for (String t : splitTags(tags == null ? null : String.valueOf(tags))) counter.merge(t, 1L, Long::sum);
+    private void requireTaxonomyAdmin(HttpServletRequest req) {
+        if (!VisibilityPolicy.isAdmin(VisibilityPolicy.currentUser(req))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "仅管理员可管理共享分类和标签");
         }
-        return counter.entrySet().stream()
-                .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
-                .map(e -> Map.<String, Object>of("name", e.getKey(), "count", e.getValue()))
-                .toList();
     }
 
     private void ensureCategory(String name) {

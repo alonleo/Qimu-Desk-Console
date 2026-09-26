@@ -12,7 +12,7 @@ class LegacyOwnerTest {
  private HttpServletRequest request() { User user=new User();user.setId(1L);user.setRole("admin");HttpServletRequest req=mock(HttpServletRequest.class);when(req.getAttribute("currentUser")).thenReturn(user);return req; }
  @Test void knowledgeListAndDetailAcceptSystemDocuments() {
   DocMapper docs=mock(DocMapper.class);Doc doc=new Doc();doc.setId(7L);doc.setTitle("系统文档");doc.setVisibility("public");Page<Doc> page=new Page<>();page.setRecords(List.of(doc));when(docs.selectPage(any(IPage.class),any())).thenReturn(page);when(docs.selectById(7L)).thenReturn(doc);
-  KnowledgeController api=new KnowledgeController(docs,mock(CategoryMapper.class),mock(UserMapper.class));
+  KnowledgeController api=new KnowledgeController(docs,mock(CategoryMapper.class),mock(UserMapper.class),mock(com.alon.admin.service.KnowledgeTagService.class));
   assertEquals(1,((List<?>)api.list(request(),null,null,null,null,null,null).get("docs")).size());assertEquals(200,api.detail(7L,request()).getStatusCode().value());
  }
  @Test void projectListAcceptsSystemProjects() {
