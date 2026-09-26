@@ -1,3 +1,4 @@
+import { memberScopeSql } from "@/core/visibility";
 import { currentUser } from "@/core/auth";
 import { row, rows } from "@/core/db";
 import { getAiConfig } from "@/core/llm";
@@ -44,6 +45,8 @@ type RecentNotice = {
 
 export default async function DashboardPage() {
   const user = await currentUser();
+  const taskScope = memberScopeSql(user, "t");
+  const projectScope = memberScopeSql(user, "p");
   // 技能与工作流以文件目录为准播种到共享库（缺失才插入，不覆盖后台维护的行）
   await Promise.all([syncSkills(), syncWorkflows()]);
 
@@ -54,8 +57,8 @@ export default async function DashboardPage() {
              COUNT(CASE WHEN status = 'doing' THEN 1 END) AS doing,
              COUNT(CASE WHEN status = 'waiting' THEN 1 END) AS waiting,
              COUNT(CASE WHEN status = 'done' THEN 1 END) AS done
-      FROM tasks
-    `)) ?? { total: 0, todo: 0, doing: 0, waiting: 0, done: 0 };
+      FROM tasks t WHERE 1=1 ${taskScope.clause}
+    `, taskScope.params)) ?? { total: 0, todo: 0, doing: 0, waiting: 0, done: 0 };
 
   const [recentTasks, projectProgress, recentNotices, skillCount, workflowCount, docCount, aiCfg] =
     await Promise.all([
@@ -64,24 +67,24 @@ export default async function DashboardPage() {
                p.name AS project_name, p.color AS project_color
         FROM tasks t
         LEFT JOIN projects p ON p.id = t.project_id
-        WHERE t.status != 'done'
+        WHERE t.status != 'done' ${taskScope.clause}
         ORDER BY CASE t.priority
           WHEN 'urgent' THEN 0 WHEN 'high' THEN 1
           WHEN 'normal' THEN 2 ELSE 3
         END, t.id DESC
         LIMIT 6
-      `),
+      `, taskScope.params),
       rows<ProjectProgress>(`
         SELECT p.id, p.name, p.color,
           COUNT(t.id) AS total,
           COUNT(CASE WHEN t.status = 'done' THEN 1 END) AS done
         FROM projects p
-        LEFT JOIN tasks t ON t.project_id = p.id
-        WHERE p.status = 'active'
+        LEFT JOIN tasks t ON t.project_id = p.id ${taskScope.clause}
+        WHERE p.status = 'active' ${projectScope.clause}
         GROUP BY p.id
         ORDER BY p.id
         LIMIT 5
-      `),
+      `, [...taskScope.params, ...projectScope.params]),
       rows<RecentNotice>(`
         SELECT n.id, n.type, n.title, n.is_pinned, u.display_name AS publisher_name, n.publish_time
         FROM notice n

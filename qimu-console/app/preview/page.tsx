@@ -1,3 +1,5 @@
+import Link from "next/link";
+import TaskDemo from "@/components/tasks/TaskDemo";
 import { cookies, headers } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import {
@@ -10,7 +12,8 @@ import View from "@/components/AdminDashboard";
 import PreviewNavigation from "@/components/ConsoleNavigation";
 import PreviewExit from "@/components/PreviewExit";
 export const dynamic = "force-dynamic";
-export default async function PreviewPage() {
+export default async function PreviewPage({searchParams}:{searchParams:Promise<{view?:string}>}) {
+  const taskPreview = (await searchParams).view === "tasks";
   if (!previewEnabled() || !localRequest(await headers())) notFound();
   if (!validPreviewSession((await cookies()).get(PREVIEW_COOKIE)?.value))
     redirect("/login");
@@ -22,15 +25,16 @@ export default async function PreviewPage() {
       </header>
       <div className="preview-notice" role="status">
         本地演示数据 ·
-        仅预览导航与首页布局，业务入口暂不可用。连接认证后端和数据库后可使用完整功能。
+        首页为只读布局，任务演示可交互；均不连接真实业务数据。
       </div>
+      <nav className="preview-view-tabs" aria-label="预览内容"><Link href="/preview">首页布局</Link><Link href="/preview?view=tasks">任务模块演示</Link></nav>
       <div className="preview-workspace">
         <aside className="preview-sidebar" inert aria-label="模块导航预览">
           <div className="preview-sidebar-label">模块导航</div>
           <PreviewNavigation  />
         </aside>
       <div className="preview-content">
-        <div className="preview-readonly" inert>
+        {taskPreview ? <TaskDemo mode="console"/> : <div className="preview-readonly" inert>
           <View
             stats={{
               users: 12,
@@ -52,7 +56,7 @@ export default async function PreviewPage() {
               ],
             }}
           />
-        </div>
+        </div>}
       </div>
       </div>
     </main>

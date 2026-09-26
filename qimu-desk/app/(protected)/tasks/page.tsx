@@ -1,43 +1,18 @@
+import { redirect } from "next/navigation";
 import { currentUser } from "@/core/auth";
 import { rows } from "@/core/db";
+import { taskServer } from "@/core/task-api";
 import TasksTabbed from "@/components/tasks/TasksTabbed";
-import type { TaskRow, ProjectRow, ScheduledTaskRow } from "@/components/tasks/types";
-
+import type { Task, Project, Member } from "@/components/tasks/task-model";
+import type { ScheduledTaskRow } from "@/components/tasks/types";
 export const dynamic = "force-dynamic";
-
-export default async function TasksPage() {
-  await currentUser();
-
-  const [tasks, projects, scheduledTasks] = await Promise.all([
-    rows<TaskRow>(`
-      SELECT t.*, p.name AS project_name, p.color AS project_color
-      FROM tasks t
-      LEFT JOIN projects p ON p.id = t.project_id
-      WHERE p.status IS NULL OR p.status != 'archived'
-      ORDER BY CASE t.priority
-        WHEN 'urgent' THEN 0
-        WHEN 'high' THEN 1
-        WHEN 'normal' THEN 2
-        ELSE 3
-      END, t.id DESC
-    `),
-    rows<ProjectRow>(`
-      SELECT p.*,
-        COUNT(t.id) AS task_count,
-        COUNT(CASE WHEN t.status = 'done' THEN 1 END) AS done_count,
-        COUNT(CASE WHEN t.status IN ('todo','doing','waiting') THEN 1 END) AS open_count
-      FROM projects p
-      LEFT JOIN tasks t ON t.project_id = p.id
-      WHERE p.status != 'archived'
-      GROUP BY p.id
-      ORDER BY p.id
-    `),
-    rows<ScheduledTaskRow>(`
-      SELECT id, name, notes, cron, enabled, last_run_at, created_at, updated_at
-      FROM scheduled_tasks
-      ORDER BY enabled DESC, id DESC
-    `),
-  ]);
-
-  return <TasksTabbed tasks={tasks} projects={projects} scheduledTasks={scheduledTasks} />;
+export default async function TasksPage({ searchParams }: { searchParams: Promise<{ projectId?: string }> }) {
+  const { projectId } = await searchParams;
+ const user = await currentUser();
+ if (!user) redirect("/login");
+ const [tasks,projects,members,scheduledTasks] = await Promise.all([
+   taskServer<Task[]>("/tasks"),taskServer<Project[]>("/projects"),taskServer<Member[]>("/tasks/members"),
+   user.role === "admin" ? rows<ScheduledTaskRow>("SELECT * FROM scheduled_tasks ORDER BY enabled DESC, id DESC") : Promise.resolve([]),
+ ]);
+ return <TasksTabbed initialProjectId={projectId} tasks={tasks} projects={projects} members={members} actor={{id:user.id,role:user.role}} scheduledTasks={scheduledTasks}/>;
 }

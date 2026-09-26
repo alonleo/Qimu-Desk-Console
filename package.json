@@ -6,6 +6,7 @@
     "dev:console": "npm --prefix qimu-console run dev",
     "build:desk": "npm --prefix qimu-desk run build",
     "build:console": "npm --prefix qimu-console run build",
-    "check:preview": "cd qimu-desk && node scripts/check-local-preview.mjs && cd ../qimu-console && node scripts/check-local-preview.mjs"
+    "check:preview": "cd qimu-desk && node scripts/check-local-preview.mjs && cd ../qimu-console && node scripts/check-local-preview.mjs",
+    "check:tasks": "node scripts/check-task-model.cjs"
   }
 }
