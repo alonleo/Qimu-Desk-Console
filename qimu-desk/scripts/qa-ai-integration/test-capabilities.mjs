@@ -43,14 +43,16 @@ assert.equal(await store.getCapability(8, 1), null);
 assert.ok(!JSON.stringify(await store.listCapabilities(7)).includes('private'));
 assert.ok(!('config' in (await store.listCapabilities(7))[0]));
 
+const llm = load("core/llm.ts", { "./db": {} });
+let finishReasons = [];
 let executed = 0; let requests = []; let answers = []; let toolProgress = [];
 const runtime = load('core/ai/tool-chat.ts', {
-  '@/core/llm': { aiReady: () => true, completionsUrl: () => 'https://example.invalid/chat/completions' },
+  '@/core/llm': { aiReady: () => true, completionsUrl: () => 'https://example.invalid/chat/completions', generationOptions: llm.generationOptions },
   './capabilities': { getCapability: async (userId, id) => userId === 7 && id === 1 ? { enabled: true, config: skill.config } : null },
   './mcp': { connectMcp: () => { throw new Error('must not connect'); } },
   '@/core/skills': { getSkillDetail: async () => null },
   '@/core/visibility': { canReadRow: () => false },
-}, { fetch: async (_, opts) => { requests.push(JSON.parse(opts.body)); return Response.json({ choices: [{ message: answers.shift() }] }); } });
+}, { fetch: async (_, opts) => { requests.push(JSON.parse(opts.body)); return Response.json({ choices: [{ message: answers.shift(), finish_reason: finishReasons.shift() }] }); } });
 const tool = { name: 'echo', label: 'Echo', description: 'echo input', parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false }, execute: async (args) => { executed++; return { output: args.value }; } };
 const opts = { cfg: { model: 'test', api_key: 'test' }, messages: [{ role: 'user', content: 'hi' }], tools: [tool], signal: new AbortController().signal, onTool: (run) => toolProgress.push(run) };
 const call = (name, args, id = 'call-1') => ({ role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
@@ -71,3 +73,12 @@ const prepared = await runtime.prepareCapabilities({ user: { id: 7 }, ids: [1], 
 assert.equal(prepared.instructions.length, 1); assert.equal(prepared.tools.length, 0); await prepared.close();
 await assert.rejects(runtime.prepareCapabilities({ user: { id: 8 }, ids: [1], skillIds: [], allowTools: true, signal: opts.signal }), /不存在/);
 console.log('PASS: Skill/plugin parsing, invalid config, encrypted credentials, owner isolation, function calling, schema validation, tool allowlist, duplicate prevention, abort, instruction-only mode');
+
+requests = []; answers = [{...call('echo',{value:'result'}), reasoning_content:'private-reasoning', reasoning_details:[{text:'private-reasoning'}]}, {role:'assistant',content:'完成'}];
+await runtime.chatWithTools({...opts,cfg:{...opts.cfg,model:'MiniMax-M3'}});
+assert.equal(requests[0].max_tokens,16384);assert.equal(requests[0].reasoning_split,true);
+assert.equal(requests[1].messages.at(-2).reasoning_content,'private-reasoning');
+assert.equal(requests[1].messages.at(-2).reasoning_details[0].text,'private-reasoning');
+const before=executed;answers=[call('echo',{value:'do not execute'})];finishReasons=['length'];
+await assert.rejects(runtime.chatWithTools(opts),/长度上限/);assert.equal(executed,before);
+console.log('PASS: MiniMax tool reasoning continuity; truncated tool requests never execute');

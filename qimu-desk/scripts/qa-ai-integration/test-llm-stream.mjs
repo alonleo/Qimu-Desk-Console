@@ -5,17 +5,17 @@ import ts from 'typescript';
 const source = readFileSync(new URL('../../core/llm.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const cfg = { enabled: true, base_url: 'https://example.invalid/v1', api_key: 'test', model: 'test' };
-async function run(response, timeout = false) {
-  let calls = 0; const deltas = [];
+async function run(response, timeout = false, model = "test", streaming = true) {
+  let calls = 0; const deltas = []; let request;
   const context = {
     exports: {}, require: () => ({}), AbortController, TextDecoder,
     setTimeout: timeout ? (fn) => { queueMicrotask(fn); return 1; } : setTimeout,
     clearTimeout: timeout ? () => {} : clearTimeout,
-    fetch: async (_, opts) => { calls++; if (timeout) { await Promise.resolve(); opts.signal.throwIfAborted(); } return response; },
+    fetch: async (_, opts) => { calls++; request = JSON.parse(opts.body); if (timeout) { await Promise.resolve(); opts.signal.throwIfAborted(); } return response; },
   };
   vm.createContext(context); vm.runInContext(js, context);
-  const result = await context.exports.chatLlmStream({ cfg, messages: [{ role: 'user', content: 'hello' }], onDelta: (s) => deltas.push(s) });
-  return { result, calls, deltas };
+  const result = await context.exports[streaming ? "chatLlmStream" : "chatLlm"]({ cfg: { ...cfg, model }, maxTokens: 4000, messages: [{ role: 'user', content: 'hello' }], onDelta: (s) => deltas.push(s) });
+  return { result, calls, deltas, request };
 }
 {
   const { result, calls, deltas } = await run(Response.json({ choices: [{ message: { content: 'JSON answer' } }] }));
@@ -41,3 +41,18 @@ for (const content of ['<think>未完成的推理', '部分正文']) {
   const { result } = await run(Response.json({ choices: [{ message: { content: '' }, finish_reason: 'length' }] }));
   assert.match(result.error, /长度/);
 }
+
+for (const streaming of [true, false]) {
+  for (const model of ['MiniMax-M2.7-highspeed', 'MiniMax-M3']) {
+    const { result, request, calls } = await run(Response.json({ choices: [{ message: { content: '正式回答', reasoning_details: [{ text: '不应展示的思考' }] }, finish_reason: 'stop' }] }), false, model, streaming);
+    assert.equal(result.content, '正式回答'); assert.equal(calls, 1);
+    assert.equal(request.reasoning_split, true); assert.equal(request.max_tokens, 16384);
+  }
+  const {request} = await run(Response.json({choices:[{message:{content:'回答'}}]}),false,'other-model',streaming);
+  assert.equal(request.max_tokens,4000);assert.equal(request.reasoning_split,undefined);
+}
+{
+  const {result,deltas} = await run(new Response('data: {"choices":[{"delta":{"reasoning_content":"思考"}}]}\n\ndata: {"choices":[{"delta":{"content":"正式回答"},"finish_reason":"stop"}]}\n\n'),false,'MiniMax-M3');
+  assert.equal(result.content,'正式回答');assert.deepEqual(deltas,['正式回答']);
+}
+console.log('PASS: MiniMax streaming/JSON reasoning separation and output budget, generic gateway compatibility');

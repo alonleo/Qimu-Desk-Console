@@ -169,6 +169,21 @@ export function completionsUrl(baseUrl: string): string {
   return `${base}/chat/completions`;
 }
 
+/** MiniMax 的生成预算包含推理过程，不能沿用普通模型的短回答额度。
+ * reasoning_split 仅分离思考与正文，不关闭思考；其他兼容网关保持原参数。
+ */
+export function generationOptions(cfg: Pick<AiConfig, "model">, maxTokens?: number) {
+  const minimax = /(?:^|\/)minimax[- ]m[23](?:[.\s-]|$)/i.test(cfg.model);
+  return {
+    ...(minimax ? { reasoning_split: true } : {}),
+    ...(minimax || maxTokens ? { max_tokens: minimax ? Math.max(maxTokens || 0, 16384) : maxTokens } : {}),
+  };
+}
+
+function generationTimeout(cfg: AiConfig, fallback: number) {
+  return generationOptions(cfg).reasoning_split ? 240_000 : fallback;
+}
+
 /**
  * 调用 OpenAI 兼容的 /chat/completions 接口（非流式）。
  * 超时默认 90s；错误信息尽量可读（HTTP 状态 + 响应体）。
@@ -185,7 +200,8 @@ export async function chatLlm(opts: {
   }
   const url = completionsUrl(cfg.base_url);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90_000);
+  const timeout = generationTimeout(cfg, 90_000);
+  const timer = setTimeout(() => controller.abort(), timeout);
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -197,7 +213,7 @@ export async function chatLlm(opts: {
         model: cfg.model,
         messages: opts.messages,
         temperature: opts.temperature ?? cfg.temperature ?? 0.7,
-        ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+        ...generationOptions(cfg, opts.maxTokens),
       }),
       signal: controller.signal,
     });
@@ -215,7 +231,7 @@ export async function chatLlm(opts: {
     if (!content) return { ok: false, error: "AI 网关返回了空内容（choices 为空）" };
     return { ok: true, content };
   } catch (err) {
-    if ((err as Error).name === "AbortError") return { ok: false, error: "AI 请求超时（90 秒）" };
+    if ((err as Error).name === "AbortError") return { ok: false, error: `AI 请求超时（${timeout / 1000} 秒）` };
     const msg = (err as Error).message || String(err);
     return { ok: false, error: `AI 请求失败：${msg}` };
   } finally {
@@ -257,7 +273,8 @@ export async function chatLlmStream(opts: {
     if (external.aborted) controller.abort();
     else external.addEventListener("abort", onExternalAbort, { once: true });
   }
-  const timer = setTimeout(() => controller.abort(), 120_000);
+  const timeout = generationTimeout(cfg, 120_000);
+  const timer = setTimeout(() => controller.abort(), timeout);
 
   let content = "";
   let finishReason: string | undefined;
@@ -273,7 +290,7 @@ export async function chatLlmStream(opts: {
         messages: opts.messages,
         temperature: opts.temperature ?? cfg.temperature ?? 0.7,
         stream: true,
-        ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
+        ...generationOptions(cfg, opts.maxTokens),
       }),
       signal: controller.signal,
     });
@@ -335,7 +352,7 @@ export async function chatLlmStream(opts: {
   } catch (err) {
     const aborted = controller.signal.aborted;
     if ((err as Error).name === "AbortError") {
-      return { ok: false, error: aborted ? (external?.aborted ? "已停止生成" : "AI 请求超时（120 秒）") : "AI 请求超时", aborted: external?.aborted === true };
+      return { ok: false, error: aborted ? (external?.aborted ? "已停止生成" : `AI 请求超时（${timeout / 1000} 秒）`) : "AI 请求超时", aborted: external?.aborted === true };
     }
     const msg = (err as Error).message || String(err);
     return { ok: false, error: `AI 请求失败：${msg}` };

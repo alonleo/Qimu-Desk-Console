@@ -1,6 +1,6 @@
 import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020";
-import { aiReady, completionsUrl, type AiConfig, type ChatMessage } from "@/core/llm";
+import { aiReady, completionsUrl, generationOptions, type AiConfig, type ChatMessage } from "@/core/llm";
 import { getCapability } from "./capabilities";
 import { connectMcp, listMcpTools } from "./mcp";
 import { getSkillDetail, runSkill } from "@/core/skills";
@@ -9,7 +9,7 @@ import type { User } from "@/core/auth";
 import type { ToolRun } from "./capability-schema";
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
-type ModelMessage = { role: string; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string };
+type ModelMessage = { role: string; content: string | null; tool_calls?: ToolCall[]; tool_call_id?: string; reasoning_content?: string; reasoning_details?: unknown[] };
 export type ChatTool = {
   name: string; label: string; description: string; parameters: Record<string, unknown>;
   execute: (args: Record<string, unknown>) => Promise<{ output: string; error?: boolean }>;
@@ -102,7 +102,7 @@ export async function chatWithTools(opts: {
       method: "POST", signal: opts.signal,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.cfg.api_key}` },
       body: JSON.stringify({
-        model: opts.cfg.model, messages, temperature: opts.cfg.temperature, max_tokens: 4000, stream: false,
+        model: opts.cfg.model, messages, temperature: opts.cfg.temperature, ...generationOptions(opts.cfg, 4000), stream: false,
         ...(opts.tools.length ? {
           tools: opts.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
           tool_choice: round === 6 || runs.length >= 12 ? "none" : "auto",
@@ -110,8 +110,9 @@ export async function chatWithTools(opts: {
       }),
     });
     if (!response.ok) throw new Error(`AI 网关返回 HTTP ${response.status}；请确认所选模型支持工具调用`);
-    const data = await response.json() as { error?: { message?: string }; choices?: { message?: ModelMessage }[] };
+    const data = await response.json() as { error?: { message?: string }; choices?: { message?: ModelMessage; finish_reason?: string }[] };
     if (data.error) throw new Error("AI 网关拒绝了工具调用请求，请检查模型配置");
+    if (data.choices?.[0]?.finish_reason === "length") throw new Error("模型输出达到长度上限，本轮工具请求未执行，请缩小任务范围后重试");
     const answer = data.choices?.[0]?.message;
     if (!answer) throw new Error("AI 网关未返回回复");
     const calls = answer.tool_calls;
@@ -120,7 +121,10 @@ export async function chatWithTools(opts: {
       return { content: answer.content, toolRuns: runs };
     }
     if (!Array.isArray(calls) || round === 6 || runs.length + calls.length > 12) throw new Error("已达到本次工具调用上限，请拆分任务后重试");
-    messages.push({ role: "assistant", content: typeof answer.content === "string" ? answer.content : null, tool_calls: calls });
+    messages.push({ role: "assistant", content: typeof answer.content === "string" ? answer.content : null, tool_calls: calls,
+      ...(typeof answer.reasoning_content === "string" ? { reasoning_content: answer.reasoning_content } : {}),
+      ...(Array.isArray(answer.reasoning_details) ? { reasoning_details: answer.reasoning_details } : {}),
+    });
     for (const call of calls) {
       opts.signal.throwIfAborted();
       if (!call || call.type !== "function" || typeof call.id !== "string" || !call.id || callIds.has(call.id) || typeof call.function?.name !== "string") throw new Error("模型返回了无效或重复的工具调用");

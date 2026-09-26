@@ -257,7 +257,7 @@ ${workflowContexts.join("\n\n")}
   if (stream) return handleStream({ req, injected, cfg, quickCmd, usedDocs });
 
   // —— 非流式分支（默认，保持兼容；QA/旧客户端走这里） ——
-  // 结构化为长输出：maxTokens 提到 4000（见 ARCHITECTURE §3.2）
+  // 普通模型保留 4000，推理模型由网关适配层补足推理与正文预算。
   const r = await chatLlm({ messages: injected, maxTokens: 4000, cfg });
   if (!r.ok) return NextResponse.json({ ok: false, error: r.error });
 
@@ -305,17 +305,17 @@ function handleStream(opts: {
           // 客户端已断开：停止推送
         }
       };
-      let raw = "";
+      // 推理与正文分离后，等待首段正文期间也保持 SSE 连接。
+      const heartbeat = setInterval(() => push({ type: "heartbeat" }), 15_000);
       const llmRes = await chatLlmStream({
         messages: injected,
         maxTokens: 4000,
         cfg,
         signal: req.signal,
         onDelta: (t) => {
-          raw += t;
           push({ type: "delta", text: t });
         },
-      });
+      }).finally(() => clearInterval(heartbeat));
 
       if (!llmRes.ok) {
         // 流式中止（用户停止/客户端断开）时：客户端已持有部分文本，不再补发 error；
