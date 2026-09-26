@@ -11,7 +11,7 @@ import {
   PauseCircleOutlined,
   PushpinFilled,
 } from "@ant-design/icons";
-import { MODULE_META, type ModuleKey } from "./modules";
+import { DESK_GROUPS, MODULE_META } from "./modules";
 import { T } from "./theme";
 
 type Stats = {
@@ -105,13 +105,17 @@ export default function DashboardView({
     );
   }, []);
 
-  // 资源数量与入口。
-  const kpis: { module: ModuleKey; count: number }[] = [
-    { module: "tasks", count: stats.tasks },
-    { module: "skills", count: stats.skills },
-    { module: "workflows", count: stats.workflows },
-    { module: "knowledge", count: stats.docs },
+  const taskMetrics = [
+    { label: "待开始", count: taskSummary.todo },
+    { label: "进行中", count: taskSummary.doing },
+    { label: "等待处理", count: taskSummary.waiting },
+    { label: "已完成", count: taskSummary.done },
   ];
+  const resourceCounts: Record<string, string> = {
+    tasks: `${stats.tasks} 项`, knowledge: `${stats.docs} 篇`,
+    skills: `${stats.skills} 项`, workflows: `${stats.workflows} 个`,
+    ai: stats.aiEnabled ? "已启用" : "未配置",
+  };
 
   const openTotal = taskSummary.todo + taskSummary.doing + taskSummary.waiting;
 
@@ -131,18 +135,10 @@ export default function DashboardView({
           管理任务 <ArrowRightOutlined />
         </Button>
       </header>
-      <div className="metric-strip">
-        {kpis.map((c) => (
-          <button
-            key={c.module}
-            className="metric-item"
-            onClick={() => router.push(MODULE_META[c.module].href)}
-          >
-            <span>{MODULE_META[c.module].label}</span>
-            <strong>{c.count}</strong>
-            <ArrowRightOutlined />
-          </button>
-        ))}
+      <div className="metric-strip task-metrics" aria-label="任务状态汇总">
+        {taskMetrics.map(item => <div className="metric-item" key={item.label}>
+          <span>{item.label}</span><strong>{item.count}</strong>
+        </div>)}
       </div>
       <div className="overview-columns">
         <section className="surface task-surface">
@@ -273,6 +269,21 @@ export default function DashboardView({
           </section>
         </aside>
       </div>
+      <section className="module-section" aria-labelledby="desk-modules-title">
+        <div className="module-section-heading"><h2 id="desk-modules-title">工作模块</h2><span>按工作内容查找入口</span></div>
+        <div className="module-directory desk-directory">
+          {DESK_GROUPS.filter(group => group.key !== "administration").map(group => (
+            <section className="module-group-card" key={group.key}>
+              <h3>{group.label}</h3>
+              <div className="module-link-list">
+                {group.modules.map(key => { const m = MODULE_META[key]; return <Link href={m.href} key={key}>
+                  {m.icon}<span>{m.label}</span><small>{resourceCounts[key]}</small><ArrowRightOutlined />
+                </Link>; })}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
       <footer className="overview-footer">
         <span>工作台</span>
         {updatedAt && <span>数据更新于 {updatedAt}</span>}

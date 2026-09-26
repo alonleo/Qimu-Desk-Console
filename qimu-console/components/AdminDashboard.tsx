@@ -3,13 +3,8 @@ import Link from "next/link";
 
 import { useRouter } from "next/navigation";
 import { Button, Progress, Table, Tag } from "antd";
-import {
-  ArrowRightOutlined,
-  NotificationOutlined,
-  ReadOutlined,
-  TeamOutlined,
-  ThunderboltOutlined,
-} from "@ant-design/icons";
+import { ArrowRightOutlined } from "@ant-design/icons";
+import { SIDEBAR_MENU } from "./modules";
 
 type AdminStats = {
   users: number;
@@ -121,7 +116,7 @@ export default function AdminDashboard({ stats }: { stats: AdminStats }) {
         <div>
           <span className="section-label">QIMU / CONSOLE</span>
           <h1>管理概览</h1>
-          <p>查看任务进度与最近执行记录。</p>
+          <p>管理业务与成员，配置自动化，检查运行记录。</p>
         </div>
         <Button onClick={() => router.push("/ai")}>
           <span
@@ -151,6 +146,19 @@ export default function AdminDashboard({ stats }: { stats: AdminStats }) {
           </button>
         ))}
       </div>
+      <section className="module-section" aria-labelledby="console-modules-title">
+        <div className="module-section-heading"><h2 id="console-modules-title">管理模块</h2><span>配置与维护</span></div>
+        <div className="module-directory console-directory">
+          {SIDEBAR_MENU.map(group => <section className="module-group-card" key={group.key}>
+            <h3>{group.icon}{group.label}</h3>
+            <div className="module-link-list">
+              {group.children.map(item => <Link href={item.key} key={item.key}>
+                {item.icon}<span>{item.label}</span><ArrowRightOutlined />
+              </Link>)}
+            </div>
+          </section>)}
+        </div>
+      </section>
       <div className="overview-columns admin-columns">
         <section className="surface">
           <div className="surface-heading">
@@ -203,49 +211,7 @@ export default function AdminDashboard({ stats }: { stats: AdminStats }) {
           </section>
         </aside>
       </div>
-      <section className="surface">
-        <div className="surface-heading">
-          <h2>常用管理</h2>
-          <span className="section-hint">成员与内容</span>
-        </div>
-        <div className="admin-shortcuts">
-          {[
-            {
-              label: "用户管理",
-              desc: "账号与成员权限",
-              href: "/users",
-              icon: <TeamOutlined />,
-            },
-            {
-              label: "知识库",
-              desc: "文档与分类",
-              href: "/knowledge",
-              icon: <ReadOutlined />,
-            },
-            {
-              label: "通知公告",
-              desc: "团队通知与发布记录",
-              href: "/notices",
-              icon: <NotificationOutlined />,
-            },
-            {
-              label: "技能管理",
-              desc: "技能配置与维护",
-              href: "/skills",
-              icon: <ThunderboltOutlined />,
-            },
-          ].map((e) => (
-            <Link href={e.href} key={e.href}>
-              {e.icon}
-              <span>
-                <strong>{e.label}</strong>
-                <small>{e.desc}</small>
-              </span>
-              <ArrowRightOutlined />
-            </Link>
-          ))}
-        </div>
-      </section>
+
     </div>
   );
 }

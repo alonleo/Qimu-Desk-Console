@@ -7,6 +7,7 @@ import {
   validPreviewSession,
 } from "@/core/local-preview";
 import View from "@/components/AdminDashboard";
+import PreviewNavigation from "@/components/ConsoleNavigation";
 import PreviewExit from "@/components/PreviewExit";
 export const dynamic = "force-dynamic";
 export default async function PreviewPage() {
@@ -21,8 +22,13 @@ export default async function PreviewPage() {
       </header>
       <div className="preview-notice" role="status">
         本地演示数据 ·
-        仅预览首页布局，业务入口暂不可用。连接认证后端和数据库后可使用完整功能。
+        仅预览导航与首页布局，业务入口暂不可用。连接认证后端和数据库后可使用完整功能。
       </div>
+      <div className="preview-workspace">
+        <aside className="preview-sidebar" inert aria-label="模块导航预览">
+          <div className="preview-sidebar-label">模块导航</div>
+          <PreviewNavigation  />
+        </aside>
       <div className="preview-content">
         <div className="preview-readonly" inert>
           <View
@@ -47,6 +53,7 @@ export default async function PreviewPage() {
             }}
           />
         </div>
+      </div>
       </div>
     </main>
   );

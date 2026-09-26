@@ -15,14 +15,13 @@ import {
   RobotOutlined,
   SafetyOutlined,
   ScheduleOutlined,
-  SettingOutlined,
   TeamOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 
 /**
- * 后台管理系统（若依风格）菜单与路由元数据。
- * - SIDEBAR_MENU：侧边栏分组菜单（首页 + 系统管理 + 系统监控 + 业务中心）
+ * 管理台菜单与路由元数据。
+ * - SIDEBAR_MENU：侧边栏与首页共用的模块分组
  * - PATH_TITLES / PATH_GROUPS：多标签页与面包屑所用的路由标题映射
  * - MODULE_META / moduleGradient：模块视图内部仍使用的颜色与图标
  */
@@ -32,44 +31,50 @@ export type MenuGroup = { key: string; label: string; icon: ReactNode; children:
 
 export const SIDEBAR_MENU: MenuGroup[] = [
   {
-    key: "grp-system",
-    label: "系统管理",
-    icon: <SettingOutlined />,
-    children: [{ key: "/users", label: "用户管理", icon: <TeamOutlined /> }],
+    key: "grp-work", label: "业务管理", icon: <AppstoreOutlined />,
+    children: [
+      { key: "/tasks", label: "任务管理", icon: <CheckSquareOutlined /> },
+      { key: "/projects", label: "项目管理", icon: <FolderOutlined /> },
+      { key: "/knowledge", label: "知识管理", icon: <ReadOutlined /> },
+    ],
   },
   {
-    key: "grp-monitor",
-    label: "系统监控",
-    icon: <MonitorOutlined />,
+    key: "grp-automation", label: "自动化配置", icon: <ApartmentOutlined />,
+    children: [
+      { key: "/skills", label: "技能管理", icon: <ThunderboltOutlined /> },
+      { key: "/workflows", label: "工作流管理", icon: <ApartmentOutlined /> },
+      { key: "/ai", label: "AI 配置", icon: <RobotOutlined /> },
+      { key: "/monitor/job", label: "定时任务", icon: <ScheduleOutlined /> },
+    ],
+  },
+  {
+    key: "grp-team", label: "成员与协作", icon: <TeamOutlined />,
+    children: [
+      { key: "/users", label: "用户管理", icon: <TeamOutlined /> },
+      { key: "/chat", label: "聊天管理", icon: <MessageOutlined /> },
+      { key: "/notices", label: "通知管理", icon: <NotificationOutlined /> },
+    ],
+  },
+  {
+    key: "grp-monitor", label: "运行监控", icon: <MonitorOutlined />,
     children: [
       { key: "/monitor/server", label: "服务监控", icon: <MonitorOutlined /> },
       { key: "/monitor/online", label: "在线用户", icon: <TeamOutlined /> },
-      { key: "/monitor/job", label: "定时任务", icon: <ScheduleOutlined /> },
       { key: "/monitor/druid", label: "数据监控", icon: <DeploymentUnitOutlined /> },
       { key: "/monitor/cache", label: "缓存监控", icon: <DatabaseOutlined /> },
+    ],
+  },
+  {
+    key: "grp-audit", label: "日志审计", icon: <SafetyOutlined />,
+    children: [
       { key: "/monitor/job-log", label: "调度日志", icon: <HistoryOutlined /> },
       { key: "/monitor/logininfor", label: "登录日志", icon: <HistoryOutlined /> },
       { key: "/monitor/operlog", label: "操作日志", icon: <SafetyOutlined /> },
     ],
   },
-  {
-    key: "grp-biz",
-    label: "业务中心",
-    icon: <AppstoreOutlined />,
-    children: [
-      { key: "/tasks", label: "任务管理", icon: <CheckSquareOutlined /> },
-      { key: "/projects", label: "项目管理", icon: <FolderOutlined /> },
-      { key: "/skills", label: "技能管理", icon: <ThunderboltOutlined /> },
-      { key: "/workflows", label: "工作流管理", icon: <ApartmentOutlined /> },
-      { key: "/knowledge", label: "知识管理", icon: <ReadOutlined /> },
-      { key: "/chat", label: "聊天管理", icon: <MessageOutlined /> },
-      { key: "/notices", label: "通知管理", icon: <NotificationOutlined /> },
-      { key: "/ai", label: "AI 管理", icon: <RobotOutlined /> },
-    ],
-  },
 ];
 
-export const HOME_MENU: MenuLeaf = { key: "/", label: "首页", icon: <HomeOutlined /> };
+export const HOME_MENU: MenuLeaf = { key: "/", label: "管理概览", icon: <HomeOutlined /> };
 
 /** 路由 → 页面标题（TagsView 标签页标题） */
 export const PATH_TITLES: Record<string, string> = {
@@ -125,7 +130,7 @@ export const MODULE_META: Record<ModuleKey, ModuleMeta> = {
   skills: { href: "/skills", label: "技能管理", color: "#13c2c2", icon: <ThunderboltOutlined /> },
   workflows: { href: "/workflows", label: "工作流管理", color: "#722ed1", icon: <ApartmentOutlined /> },
   knowledge: { href: "/knowledge", label: "知识管理", color: "#1677ff", icon: <ReadOutlined /> },
-  ai: { href: "/ai", label: "AI 管理", color: "#722ed1", icon: <RobotOutlined /> },
+  ai: { href: "/ai", label: "AI 配置", color: "#722ed1", icon: <RobotOutlined /> },
   chat: { href: "/chat", label: "聊天管理", color: "#9254de", icon: <MessageOutlined /> },
   "monitor-server": { href: "/monitor/server", label: "服务监控", color: "#1677ff", icon: <MonitorOutlined /> },
   "monitor-online": { href: "/monitor/online", label: "在线用户", color: "#13c2c2", icon: <TeamOutlined /> },

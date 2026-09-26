@@ -6,7 +6,6 @@ import {
   Button,
   Dropdown,
   Layout,
-  Menu,
   Tag,
   Tooltip,
 } from "antd";
@@ -22,11 +21,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   HOME_MENU,
-  PATH_GROUP_KEYS,
   PATH_GROUPS,
   PATH_TITLES,
-  SIDEBAR_MENU,
 } from "./modules";
+
+import ConsoleNavigation from "./ConsoleNavigation";
 
 const { Sider, Header, Content } = Layout;
 
@@ -50,10 +49,6 @@ export default function AdminAppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [compact, setCompact] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [openKeys, setOpenKeys] = useState<string[]>(() => {
-    const g = PATH_GROUP_KEYS[pathname];
-    return g ? [g] : [];
-  });
   // 多标签页：初始含「首页」，随路由追加
   const [tabs, setTabs] = useState<TabItem[]>([
     { path: HOME_MENU.key, title: HOME_MENU.label },
@@ -107,21 +102,6 @@ export default function AdminAppShell({
     router.refresh();
   }
 
-  const menuItems = [
-    { key: HOME_MENU.key, icon: HOME_MENU.icon, label: HOME_MENU.label },
-    ...SIDEBAR_MENU.map((g) => ({
-      key: g.key,
-      icon: g.icon,
-      label: g.label,
-      children: g.children.map((c) => ({
-        key: c.key,
-        icon: c.icon,
-        label: c.label,
-      })),
-    })),
-  ];
-
-  const selectedKeys = [pathname];
   const pageTitle = PATH_TITLES[pathname] ?? "";
   const pageGroup = PATH_GROUPS[pathname];
 
@@ -169,16 +149,7 @@ export default function AdminAppShell({
         </div>
 
         {/* 分组菜单 */}
-        <Menu
-          theme="light"
-          mode="inline"
-          items={menuItems}
-          selectedKeys={selectedKeys}
-          openKeys={collapsed ? [] : openKeys}
-          onOpenChange={(keys) => setOpenKeys(keys as string[])}
-          onClick={({ key }) => { router.push(key); if (compact) setCollapsed(true); }}
-          style={{ borderInlineEnd: "none", paddingTop: 4, background: "transparent" }}
-        />
+        <ConsoleNavigation collapsed={collapsed} onNavigate={() => { if (compact) setCollapsed(true); }} />
       </Sider>
 
       <Layout className="main-layout">
@@ -213,7 +184,7 @@ export default function AdminAppShell({
             />
             <Breadcrumb
               items={[
-                { title: "首页", href: "/" },
+                { title: HOME_MENU.label, href: "/" },
                 ...(pageGroup ? [{ title: pageGroup }] : []),
                 ...(pageTitle && pathname !== "/"
                   ? [{ title: pageTitle }]
@@ -329,7 +300,7 @@ export default function AdminAppShell({
             <span
               onClick={() => {
                 const home = tabs.find((t) => t.path === "/");
-                setTabs(home ? [home] : [{ path: "/", title: "首页" }]);
+                setTabs(home ? [home] : [{ path: "/", title: HOME_MENU.label }]);
                 router.push("/");
               }}
               style={{

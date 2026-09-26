@@ -43,7 +43,7 @@ export type ModuleMeta = {
 export const MODULE_META: Record<ModuleKey, ModuleMeta> = {
   dashboard: {
     href: "/",
-    label: "总览",
+    label: "工作概览",
     color: "#61778e",
     icon: <DashboardOutlined />,
   },
@@ -124,3 +124,14 @@ export const BRAND_COLOR = "#345d88";
 export function moduleGradient(color: string): string {
   return color;
 }
+
+/** Navigation and homepage share the same module order. Profile stays in the account menu. */
+export const DESK_GROUPS: { key: string; label: string; modules: ModuleKey[] }[] = [
+  { key: "work", label: "日常工作", modules: ["tasks", "projects", "knowledge"] },
+  { key: "collaboration", label: "团队协作", modules: ["chat", "notices"] },
+  { key: "automation", label: "助手与自动化", modules: ["ai", "skills", "workflows"] },
+  { key: "administration", label: "管理入口", modules: ["users", "hub"] },
+];
+export const DESK_PATH_GROUPS = Object.fromEntries(
+  DESK_GROUPS.flatMap(group => group.modules.map(key => [MODULE_META[key].href, group.label])),
+);

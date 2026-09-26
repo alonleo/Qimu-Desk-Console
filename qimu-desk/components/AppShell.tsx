@@ -9,7 +9,7 @@ import SidebarNav from "./SidebarNav";
 import LogoutButton from "./LogoutButton";
 import NoticeCenter from "./notices/NoticeCenter";
 import AIView from "./ai/AIView";
-import { MODULE_META } from "./modules";
+import { DESK_PATH_GROUPS, MODULE_META } from "./modules";
 import { T } from "./theme";
 
 const { Sider, Header, Content } = Layout;
@@ -82,7 +82,8 @@ export default function AppShell({
     if (!k) return;
     const hit = Object.values(MODULE_META).find(
       (m) =>
-        m.label.includes(k) || m.href.toLowerCase().includes(k.toLowerCase()),
+        (!m.adminOnly || user.role === "admin") &&
+        (m.label.includes(k) || m.href.toLowerCase().includes(k.toLowerCase())),
     );
     if (hit) {
       router.push(hit.href);
@@ -145,7 +146,7 @@ export default function AppShell({
               icon={<MenuOutlined />}
               onClick={() => setNavOpen(true)}
             />
-            <span>工作空间</span>
+            <span>{DESK_PATH_GROUPS[pathname] || "工作空间"}</span>
             <span className="header-divider">/</span>
             <strong>
               {Object.values(MODULE_META).find((m) => m.href === pathname)
