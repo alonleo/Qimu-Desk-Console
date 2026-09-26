@@ -176,9 +176,11 @@ public class WorkflowEngine {
             payload.put("model", cfg.getModel());
             payload.put("messages", messages);
             payload.put("temperature", cfg.getTemperature() == null ? 0.7 : cfg.getTemperature());
+            payload.putAll(AiGenerationPolicy.options(cfg, 4000));
+            AiGenerationPolicy.checkInput(cfg, om.writeValueAsString(messages));
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(90))
+                    .timeout(Duration.ofSeconds(AiGenerationPolicy.timeout(cfg)))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + cfg.getApiKey())
                     .POST(HttpRequest.BodyPublishers.ofString(om.writeValueAsString(payload), StandardCharsets.UTF_8))
@@ -194,6 +196,7 @@ public class WorkflowEngine {
             Object choices = data.get("choices");
             String content = null;
             if (choices instanceof List<?> cs && !cs.isEmpty() && cs.get(0) instanceof Map<?, ?> c0) {
+                if ("length".equals(c0.get("finish_reason"))) return Map.of("error", "模型输出达到长度上限，请在网关设置中提高最大输出 tokens");
                 Object msg = c0.get("message");
                 if (msg instanceof Map<?, ?> mm) content = mm.get("content") == null ? null : mm.get("content").toString();
             }

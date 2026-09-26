@@ -2,6 +2,7 @@ package com.alon.admin.controller;
 
 import com.alon.admin.common.BatchOps;
 import com.alon.admin.entity.AiConfig;
+import com.alon.admin.service.AiGenerationPolicy;
 import com.alon.admin.entity.Doc;
 import com.alon.admin.mapper.AiConfigMapper;
 import com.alon.admin.mapper.DocMapper;
@@ -56,6 +57,7 @@ public class AiController {
         if (name.length() > 32) return err("网关名称过长（最多 32 字）");
         long count = aiConfigMapper.selectCount(null);
         AiConfig cfg = new AiConfig();
+        try { AiGenerationPolicy.apply(cfg, body); } catch (IllegalArgumentException e) { return err(e.getMessage()); }
         cfg.setName(name);
         cfg.setProvider(body.getOrDefault("provider", "openai-compatible").toString());
         cfg.setBaseUrl(body.getOrDefault("base_url", "").toString().trim());
@@ -76,6 +78,7 @@ public class AiController {
     public Map<String, Object> updateGateway(@PathVariable Integer id, @RequestBody Map<String, Object> body) {
         AiConfig cfg = aiConfigMapper.selectById(id);
         if (cfg == null) return err("网关不存在");
+        try { AiGenerationPolicy.apply(cfg, body); } catch (IllegalArgumentException e) { return err(e.getMessage()); }
         if (body.get("name") != null) {
             String name = body.get("name").toString().trim();
             if (name.isBlank()) return err("网关名称不能为空");
@@ -164,6 +167,7 @@ public class AiController {
                 continue;
             }
             try {
+                AiGenerationPolicy.apply(cfg, data);
                 if (data.get("provider") != null) cfg.setProvider(data.get("provider").toString());
                 if (data.get("base_url") != null) cfg.setBaseUrl(data.get("base_url").toString().trim());
                 if (data.get("model") != null) cfg.setModel(data.get("model").toString().trim());
@@ -249,6 +253,7 @@ public class AiController {
     @PutMapping("/config")
     public Map<String, Object> saveConfig(@RequestBody Map<String, Object> body) {
         AiConfig cfg = getDefaultConfig();
+        try { AiGenerationPolicy.apply(cfg, body); } catch (IllegalArgumentException e) { return err(e.getMessage()); }
         if (body.get("name") != null) cfg.setName(body.get("name").toString().trim());
         if (body.get("base_url") != null) cfg.setBaseUrl(body.get("base_url").toString().trim());
         if (body.get("model") != null) cfg.setModel(body.get("model").toString().trim());
@@ -332,6 +337,9 @@ public class AiController {
         m.put("base_url", c.getBaseUrl() == null ? "" : c.getBaseUrl());
         m.put("api_key", maskKey(c.getApiKey()));
         m.put("model", c.getModel() == null ? "" : c.getModel());
+        m.put("max_input_tokens", AiGenerationPolicy.value(c.getMaxInputTokens()));
+        m.put("max_output_tokens", AiGenerationPolicy.value(c.getMaxOutputTokens()));
+        m.put("timeout_seconds", AiGenerationPolicy.value(c.getTimeoutSeconds()));
         m.put("temperature", c.getTemperature() == null ? 0.7 : c.getTemperature());
         m.put("enabled", c.getEnabled() != null && c.getEnabled() == 1);
         m.put("is_default", c.getIsDefault() != null && c.getIsDefault() == 1);
@@ -363,10 +371,11 @@ public class AiController {
             payload.put("model", cfg.getModel());
             payload.put("messages", messages);
             payload.put("temperature", cfg.getTemperature() == null ? 0.7 : cfg.getTemperature());
-            payload.put("max_tokens", maxTokens);
+            payload.putAll(AiGenerationPolicy.options(cfg, maxTokens));
+            AiGenerationPolicy.checkInput(cfg, om.writeValueAsString(messages));
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(90))
+                    .timeout(Duration.ofSeconds(AiGenerationPolicy.timeout(cfg)))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + cfg.getApiKey())
                     .POST(HttpRequest.BodyPublishers.ofString(om.writeValueAsString(payload), StandardCharsets.UTF_8))
@@ -381,6 +390,7 @@ public class AiController {
             Object choices = data.get("choices");
             String content = null;
             if (choices instanceof List<?> cs && !cs.isEmpty() && cs.get(0) instanceof Map<?, ?> c0) {
+                if ("length".equals(c0.get("finish_reason"))) return Map.of("error", "模型输出达到长度上限，请在网关设置中提高最大输出 tokens");
                 Object msg = c0.get("message");
                 if (msg instanceof Map<?, ?> mm) content = mm.get("content") == null ? null : mm.get("content").toString();
             }

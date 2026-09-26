@@ -18,6 +18,9 @@ public class AiConfig {
     private String apiKey;
     private String model;
     private Double temperature;
+    private Integer maxInputTokens;
+    private Integer maxOutputTokens;
+    private Integer timeoutSeconds;
     private Integer enabled;
     private Integer isDefault;
     private LocalDateTime updatedAt;
