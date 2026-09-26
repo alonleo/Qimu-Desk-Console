@@ -75,7 +75,7 @@ public class ProjectController {
             // 可见性透出：visibility 缺省按 public（旧数据/降级），owner_name 由 users 批量组装
             m.put("visibility", p.getVisibility() == null ? VisibilityPolicy.PUBLIC : p.getVisibility());
             m.put("owner_id", p.getOwnerId());
-            m.put("owner_name", ownerNames.get(p.getOwnerId()));
+            m.put("owner_name", (p.getOwnerId() == null ? null : ownerNames.get(p.getOwnerId())));
             int[] s = stats.getOrDefault(p.getId(), new int[0]);
             m.put("task_count", s.length == 2 ? s[0] : 0);
             m.put("done_count", s.length == 2 ? s[1] : 0);

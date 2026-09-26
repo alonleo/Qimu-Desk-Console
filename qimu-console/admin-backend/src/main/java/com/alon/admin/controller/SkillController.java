@@ -438,7 +438,7 @@ public class SkillController {
         // 可见性透出：visibility 缺省按 public（旧数据/降级），owner_name 由 users 批量组装
         item.put("visibility", s.getVisibility() == null ? VisibilityPolicy.PUBLIC : s.getVisibility());
         item.put("owner_id", s.getOwnerId());
-        item.put("owner_name", ownerNames == null ? null : ownerNames.get(s.getOwnerId()));
+        item.put("owner_name", ownerNames == null ? null : (s.getOwnerId() == null ? null : ownerNames.get(s.getOwnerId())));
         item.put("run_count", countMap.getOrDefault(s.getId(), 0L));
         item.put("last_run_status", lastStatusMap.get(s.getId()));
         item.put("last_run_at", dt(s.getLastRunAt()));

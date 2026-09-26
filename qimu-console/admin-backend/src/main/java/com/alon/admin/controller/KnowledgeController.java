@@ -81,7 +81,7 @@ public class KnowledgeController {
         if (!VisibilityPolicy.canRead(user, d.getVisibility(), d.getOwnerId())) {
             return ResponseEntity.status(403).body(Map.of("error", "无权访问"));
         }
-        return ResponseEntity.ok(Map.of("doc", toDocFull(d, VisibilityPolicy.ownerNames(userMapper, List.of(d.getOwnerId())))));
+        return ResponseEntity.ok(Map.of("doc", toDocFull(d, VisibilityPolicy.ownerNames(userMapper, java.util.Collections.singletonList(d.getOwnerId())))));
     }
 
     @PostMapping
@@ -398,7 +398,7 @@ public class KnowledgeController {
         // 可见性透出：visibility 缺省按 public（旧数据/降级），owner_name 由 users 批量组装
         m.put("visibility", d.getVisibility() == null ? VisibilityPolicy.PUBLIC : d.getVisibility());
         m.put("owner_id", d.getOwnerId());
-        m.put("owner_name", ownerNames.get(d.getOwnerId()));
+        m.put("owner_name", (d.getOwnerId() == null ? null : ownerNames.get(d.getOwnerId())));
         m.put("created_at", dt(d.getCreatedAt()));
         m.put("updated_at", dt(d.getUpdatedAt()));
         m.put("excerpt", makeExcerpt(d, q));
@@ -417,7 +417,7 @@ public class KnowledgeController {
         m.put("source", d.getSource() == null || d.getSource().isBlank() ? "manual" : d.getSource());
         m.put("visibility", d.getVisibility() == null ? VisibilityPolicy.PUBLIC : d.getVisibility());
         m.put("owner_id", d.getOwnerId());
-        m.put("owner_name", ownerNames.get(d.getOwnerId()));
+        m.put("owner_name", (d.getOwnerId() == null ? null : ownerNames.get(d.getOwnerId())));
         m.put("created_at", dt(d.getCreatedAt()));
         m.put("updated_at", dt(d.getUpdatedAt()));
         return m;

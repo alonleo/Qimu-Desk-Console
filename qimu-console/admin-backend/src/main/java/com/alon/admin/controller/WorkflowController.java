@@ -115,7 +115,7 @@ public class WorkflowController {
             m.put("steps", parseSteps(r.getLogs()));
             return m;
         }).toList();
-        Map<Long, String> ownerNames = VisibilityPolicy.ownerNames(userMapper, List.of(w.getOwnerId()));
+        Map<Long, String> ownerNames = VisibilityPolicy.ownerNames(userMapper, java.util.Collections.singletonList(w.getOwnerId()));
         return Map.of("workflow", toWorkflowItem(w, ownerNames), "runs", runs);
     }
 
@@ -427,7 +427,7 @@ public class WorkflowController {
         // 可见性透出：visibility 缺省按 public（旧数据/降级），owner_name 由 users 批量组装
         item.put("visibility", w.getVisibility() == null ? VisibilityPolicy.PUBLIC : w.getVisibility());
         item.put("owner_id", w.getOwnerId());
-        item.put("owner_name", ownerNames == null ? null : ownerNames.get(w.getOwnerId()));
+        item.put("owner_name", ownerNames == null ? null : (w.getOwnerId() == null ? null : ownerNames.get(w.getOwnerId())));
         item.put("created_at", dt(w.getCreatedAt()));
         item.put("updated_at", dt(w.getUpdatedAt()));
         return item;
