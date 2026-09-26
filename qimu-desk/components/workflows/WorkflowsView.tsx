@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Alert, App, Button, Collapse, Empty, Form, Input, Select, Space, Spin, Table, Tabs, Tag, Typography } from "antd";
+import { Alert, App, Button, Collapse, Empty, Form, Input, Select, Space, Spin, Table, Tabs, Tag } from "antd";
 import { ApartmentOutlined, ApiOutlined, CheckCircleFilled, ClockCircleOutlined, CloseCircleFilled, CodeOutlined, FileTextOutlined, PlayCircleFilled, ReloadOutlined, RobotOutlined, SearchOutlined, ThunderboltFilled } from "@ant-design/icons";
 import type { StepType, StepLog, WorkflowRecord } from "@/core/workflows";
-import RunOutput from "@/components/skills/RunOutput";
+import ResultWorkspace from "@/components/automation/ResultWorkspace";
 import YamlBlock from "@/components/skills/YamlBlock";
 import SourceTag from "@/components/SourceTag";
 import VisibilityTag from "@/components/VisibilityTag";
@@ -41,6 +41,7 @@ export default function WorkflowsView({ initialWorkflows, initialRuns }: { initi
   const [scope, setScope] = useState("all");
   const [sort, setSort] = useState("name");
   const [tab, setTab] = useState("run");
+  const [outputStep, setOutputStep] = useState<string | null>(null);
   const [history, setHistory] = useState<RunSummary[]>([]);
   const [result, setResult] = useState<RunSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -176,7 +177,29 @@ export default function WorkflowsView({ initialWorkflows, initialRuns }: { initi
     if (record.status === "running") setPending(prev => ({ ...prev, [record.id]: { workflowId: record.workflow_id, name: selected?.displayName || record.workflow_name } }));
   }
 
-  return <div className="wf-workspace">
+  const readingResult = !!selected && tab === "result";
+  const plannedSteps = selected?.steps || [];
+  const resultSteps = (result?.steps?.length && result.status !== "running"
+    ? result.steps.map(log => ({ id: log.stepId, name: log.name, log }))
+    : plannedSteps.map(step => ({ id: step.id, name: step.name || step.id, log: result?.steps?.find(s => s.stepId === step.id) })));
+  // 默认阅读最后一个有输出的步骤；手动选择后保持该步骤。
+  const chosenStep = resultSteps.find(s => `${result?.id}:${s.id}` === outputStep)
+    || [...resultSteps].reverse().find(s => s.log?.output?.trim()) || resultSteps[0];
+  return <>
+    {readingResult && <ResultWorkspace
+      title={selected.displayName} subtitle="工作流 / 执行结果"
+      status={result && <Space><Status status={result.status} /><span>{fmtDuration(result.duration_ms)}</span></Space>}
+      navigationTitle="执行步骤"
+      toolbar={<Select aria-label="选择运行记录" value={result?.id} placeholder="选择运行记录" options={(result && !history.some(r => r.id === result.id) ? [result, ...history] : history).map(r => ({ value: r.id, label: `运行 #${r.id} · ${fmtTime(r.started_at)}` }))} onChange={id => { const run = history.find(r => r.id === id); if (run) showRun(run); }} />}
+      entries={resultSteps.map(s => ({ id: s.id, title: s.name, detail: s.log ? fmtDuration(s.log.durationMs) : "等待执行", status: s.log && <Status status={s.log.status} /> }))}
+      activeId={chosenStep?.id} onSelect={id => setOutputStep(`${result?.id}:${id}`)}
+      onBack={() => setTab("run")} outputTitle={chosenStep?.name || "执行结果"}
+      output={chosenStep?.log?.output || ""} loading={result?.status === "running"}
+      notice={chosenStep?.log?.error ? <Alert type="error" showIcon title={chosenStep.log.error} /> : result?.status === "failed" ? <Alert type="error" showIcon title="本次执行失败，已完成步骤的输出已保留" /> : undefined}
+      emptyText={chosenStep?.log?.status === "skipped" ? "前序步骤失败，此步骤未执行。" : "此步骤没有输出，选择其他步骤查看结果。"}
+      details={chosenStep?.log && <><p>步骤耗时：{fmtDuration(chosenStep.log.durationMs)}</p><p>状态：{statusLabels[chosenStep.log.status] || chosenStep.log.status}</p>{chosenStep.log.error && <pre>{chosenStep.log.error}</pre>}</>}
+    />}
+    <div className="wf-workspace" style={readingResult ? { display: "none" } : undefined}>
     <header className="wf-heading"><div><span className="wf-eyebrow">自动化 / 工作流</span><h1>工作流</h1><p>串联技能与工具，让重复的工作按步骤完成。</p></div><Button icon={<ReloadOutlined />} loading={refreshing} onClick={manualRefresh}>刷新</Button></header>
     <div className="wf-summary" aria-label="工作流概况">
       <div><span>可用工作流</span><strong>{workflows.length}</strong></div>
@@ -199,6 +222,7 @@ export default function WorkflowsView({ initialWorkflows, initialRuns }: { initi
       <section className="wf-detail" aria-label="工作流工作区">
         {!selected ? <Empty description="选择工作流，查看步骤并开始运行" /> : <>
           <div className="wf-detail-heading"><div className="wf-section-heading"><div><span className="wf-eyebrow">{selected.name} · v{selected.version}</span><h2>{selected.displayName}</h2></div><Space wrap><VisibilityTag value={selected.visibility} /><SourceTag source={selected.source} /></Space></div><p>{selected.description || "暂无描述"}</p><span className="wf-caption">上次运行 {fmtTime(selected.lastRunAt)} · 累计 {selected.runCount} 次</span></div>
+          {result && <Button style={{ margin: "16px 24px 0" }} onClick={() => setTab("result")}>打开执行结果</Button>}
           <Tabs activeKey={tab} onChange={setTab} items={[
             { key: "run", label: "流程与运行", children: <div className="wf-execution"><section><div className="wf-section-heading"><h3>执行步骤</h3><span>按顺序执行 · {selected.stepCount} 步</span></div><ol className="wf-steps">{selected.steps.map((step, index) => <li key={step.id}><span className="wf-step-number">{index + 1}</span><div><strong>{step.name}</strong><code>{step.id}</code></div><Tag icon={STEP_META[step.type]?.icon} color={STEP_META[step.type]?.color}>{STEP_META[step.type]?.label || step.type}</Tag></li>)}</ol>{!selected.steps.length && <Empty description="尚未配置步骤" image={Empty.PRESENTED_IMAGE_SIMPLE} />}</section><section className="wf-parameters"><h3>运行参数</h3><p>确认输入后开始执行。</p><Form key={selected.id} form={form} layout="vertical" initialValues={Object.fromEntries(selected.params.map(p => [p.name, p.default ?? ""]))} onFinish={run} disabled={!!active}>
               {!selected.params.length && <div className="wf-no-params"><ThunderboltFilled /><span>无需填写参数，可以直接运行。</span></div>}
@@ -206,12 +230,6 @@ export default function WorkflowsView({ initialWorkflows, initialRuns }: { initi
               <Button type="primary" htmlType="submit" block size="large" icon={<PlayCircleFilled />} loading={submittingId === selected.id} disabled={!!active || !selected.stepCount}>{active ? "运行中" : "运行工作流"}</Button>
               <Button className="wf-reset" type="text" block onClick={() => form.resetFields()} disabled={!!active}>恢复默认参数</Button>
             </Form><span className="wf-caption">步骤失败时停止执行，后续步骤会标记为跳过。</span></section></div> },
-            { key: "result", label: "执行结果", children: <div className="wf-tab-body" aria-live="polite">{!result ? <Empty description="运行工作流或从运行历史中选择一条记录，在这里查看输出" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : <>
-              <div className="wf-section-heading"><Space wrap><h3>执行结果 #{result.id}</h3><Status status={result.status} /></Space><span>{fmtDuration(result.duration_ms)}</span></div>
-              {result.status === "running" && <Alert showIcon type="info" title="正在后台执行，输出会自动更新" />}
-              {result.status === "failed" && <Alert showIcon type="error" title="工作流执行失败，以下保留已完成步骤的输出" description="可在运行日志中查看失败原因与跳过的步骤。" />}
-              <WorkflowOutputs steps={result.steps || []} running={result.status === "running"} />
-            </>}</div> },
             { key: "logs", label: "运行日志", children: <div className="wf-tab-body">{!result ? <Empty description="运行工作流或从运行历史中选择一条记录" image={Empty.PRESENTED_IMAGE_SIMPLE} /> : <><div className="wf-section-heading"><Space wrap><h3>运行 #{result.id}</h3><Status status={result.status} /></Space><span>{fmtDuration(result.duration_ms)}</span></div>{result.status === "running" && <Alert showIcon type="info" title="正在后台执行，结果会自动更新" description="可继续浏览其他工作流，完成后将收到通知。" />}<StepResults steps={result.steps || []} />{result.status !== "running" && !result.steps?.length && <Empty description="本次运行没有步骤日志" image={Empty.PRESENTED_IMAGE_SIMPLE} />}</>}</div> },
             { key: "history", label: "运行历史", children: <div className="wf-tab-body">{historyError && <Alert type="error" title={historyError} action={<Button onClick={() => loadHistory(selected.id)}>重试</Button>} />}<Spin spinning={loading}><RunTable runs={history} onOpen={showRun} /></Spin><p className="wf-caption">展示该工作流最近 10 次运行，点击记录查看逐步输出。</p></div> },
             { key: "definition", label: "流程定义", children: <div className="wf-tab-body">{selected.sourceText ? <YamlBlock source={selected.sourceText} maxHeight={600} /> : <Empty description="此工作流未保存 YAML 原文" image={Empty.PRESENTED_IMAGE_SIMPLE} />}</div> },
@@ -220,7 +238,7 @@ export default function WorkflowsView({ initialWorkflows, initialRuns }: { initi
       </section>
     </div>
     <section className="wf-recent"><div className="wf-section-heading"><h2>最近运行</h2><span>最近 {runs.length} 条记录 · 每 10 秒同步</span></div><RunTable runs={runs} onOpen={record => { if (record.workflow_id === selectedId) showRun(record); else { requestedRun.current = record; setSelectedId(record.workflow_id); } }} /></section>
-  </div>;
+  </div></>;
 }
 
 function RunTable({ runs, onOpen }: { runs: RunSummary[]; onOpen: (run: RunSummary) => void }) {
@@ -234,13 +252,4 @@ function RunTable({ runs, onOpen }: { runs: RunSummary[]; onOpen: (run: RunSumma
 }
 function StepResults({ steps }: { steps: StepLog[] }) {
   return <Collapse className="wf-step-results" items={steps.map(s => ({ key: s.stepId, label: <Space wrap><Status status={s.status} /><strong>{s.name}</strong><span>{fmtDuration(s.durationMs)}</span></Space>, children: <>{s.error && <Alert type="error" showIcon title={s.error} />}{s.output ? <pre className="wf-raw-log">{s.output}</pre> : <p className="wf-caption">{s.status === "skipped" ? "前序步骤失败，本步骤未执行。" : "无输出"}</p>}</> }))} />;
-}
-
-function WorkflowOutputs({ steps, running }: { steps: StepLog[]; running: boolean }) {
-  const outputs = steps.filter(step => step.output.trim());
-  if (!outputs.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={running ? "正在处理，等待步骤输出…" : "本次运行没有输出，可在运行日志中查看执行详情"} />;
-  return <div className="wf-outputs">{outputs.map(step => <section key={step.stepId} className="wf-output-card" aria-label={`${step.name}的输出`}>
-    <div className="wf-section-heading"><Space wrap><h3>{step.name}</h3><Status status={step.status} /></Space><Typography.Text copyable={{ text: step.output }}>复制结果</Typography.Text></div>
-    <RunOutput output={step.output} maxHeight={600} />
-  </section>)}</div>;
 }
