@@ -232,7 +232,7 @@ export function sanitizeGroupName(raw: string): string | null {
 /** "yyyy-MM-dd HH:mm:ss" → 气泡时间（当天只显示 HH:mm，跨天显示 MM-DD HH:mm） */
 export function formatMessageTime(createdAt: string): string {
   if (!createdAt) return "";
-  const [date, time] = createdAt.split(" ");
+  const [date, time] = createdAt.split(/[T ]/);
   const hhmm = (time || "").slice(0, 5);
   const today = new Date();
   const p = (n: number) => String(n).padStart(2, "0");

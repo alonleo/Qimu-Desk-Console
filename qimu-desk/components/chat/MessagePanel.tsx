@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Avatar, Badge, Button, Input, Popover, Spin, Tag, Tooltip } from "antd";
-import { SendOutlined, SmileOutlined, TeamOutlined } from "@ant-design/icons";
+import { Alert, Avatar, Badge, Button, Input, Popover, Spin, Tag, Tooltip } from "antd";
+import { ArrowLeftOutlined, MessageOutlined, SendOutlined, SmileOutlined, TeamOutlined } from "@ant-design/icons";
 import { moduleGradient } from "../modules";
 import type { ChatDisplayMessage, WsStatus } from "@/core/chat";
 import { CONTENT_MAX, formatMessageTime } from "@/core/chat";
@@ -33,6 +33,13 @@ export type ActiveHeader =
   | { kind: "group"; conversationId: number; name: string; memberCount: number };
 
 type Props = {
+  draft: string;
+  onDraftChange: (value: string) => void;
+  historyError: boolean;
+  onRetry: () => void;
+  onBack: () => void;
+  onStart: () => void;
+  meName: string;
   meId: number;
   active: ActiveHeader | null;
   messages: ChatDisplayMessage[];
@@ -53,7 +60,8 @@ function DayDivider({ date }: { date: string }) {
 }
 
 export default function MessagePanel({
-  meId,
+  draft: text, onDraftChange: setText, historyError, onRetry, onBack, onStart,
+  meId, meName,
   active,
   messages,
   loadingHistory,
@@ -63,44 +71,38 @@ export default function MessagePanel({
   onLoadMore,
   onSend,
 }: Props) {
-  const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // 记录上一帧消息数量/首条 id：区分"加载历史"（保持滚动位置）与"新消息"（滚到底部）
-  const prevTopIdRef = useRef<number | null>(null);
-  const prevLenRef = useRef(0);
-
+  const previousHeight = useRef<number | null>(null);
+  const nearBottom = useRef(true);
+  const lastMessage = useRef<string | number | undefined>(undefined);
   const isGroup = active?.kind === "group";
+  const inputOk = !loadingHistory && !historyError && text.trim().length > 0 && text.trim().length <= CONTENT_MAX;
 
-  const inputOk = text.trim().length > 0 && text.trim().length <= CONTENT_MAX;
-
-  // 新消息到达或切换会话时滚到底部；加载历史时保持滚动位置
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const topId = messages.length > 0 ? messages[0].id : null;
-    const grew = messages.length > prevLenRef.current;
-    const loadedHistory = topId !== prevTopIdRef.current && messages.length >= prevLenRef.current && prevTopIdRef.current !== null;
-    if (loadedHistory && el.scrollTop < 60) {
-      // 保持视觉位置：新内容插入顶部，补偿原高度
-      const anchor = el.scrollHeight - el.scrollTop;
-      requestAnimationFrame(() => {
-        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight - anchor;
-      });
-    } else if (grew || prevTopIdRef.current !== topId) {
+    const last = messages.at(-1);
+    const key = last?.clientId ?? last?.id;
+    if (previousHeight.current !== null && !loadingMore) {
+      el.scrollTop += el.scrollHeight - previousHeight.current;
+      previousHeight.current = null;
+    } else if (nearBottom.current || (key !== lastMessage.current && last?.senderId === meId)) {
       el.scrollTop = el.scrollHeight;
     }
-    prevTopIdRef.current = topId;
-    prevLenRef.current = messages.length;
-  }, [messages]);
+    lastMessage.current = key;
+  }, [messages, loadingMore, loadingHistory, meId]);
 
+  function loadEarlier() {
+    if (!loadingMore && !loadingHistory && hasMore) {
+      previousHeight.current = scrollRef.current?.scrollHeight ?? null;
+      onLoadMore();
+    }
+  }
   function handleScroll() {
     const el = scrollRef.current;
     if (!el) return;
-    // 顶部触发向上分页（有更多历史且非加载中）
-    if (el.scrollTop <= 4 && hasMore && !loadingMore && !loadingHistory && messages.length > 0) {
-      onLoadMore();
-    }
+    nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
   }
 
   function doSend() {
@@ -119,8 +121,11 @@ export default function MessagePanel({
 
   if (!active) {
     return (
-      <div className="flex h-full flex-1 items-center justify-center bg-[#fafafa] text-sm text-[#8c8c8c]">
-        从左侧选择会话开始聊天
+      <div className="chat-empty">
+        <div className="chat-empty-icon"><MessageOutlined /></div>
+        <h2>从一段会话开始协作</h2>
+        <p>选择左侧会话继续交流，或邀请同事发起单聊、群聊。</p>
+        <Button type="primary" onClick={onStart}>发起会话</Button>
       </div>
     );
   }
@@ -145,7 +150,7 @@ export default function MessagePanel({
   let lastDate = "";
   let lastGroupSenderName = "";
   messages.forEach((m) => {
-    const date = (m.createdAt || "").split(" ")[0] || "";
+    const date = (m.createdAt || "").split(/[T ]/)[0] || "";
     if (date && date !== lastDate) {
       items.push(<DayDivider key={`d-${m.id}-${date}`} date={date} />);
       lastDate = date;
@@ -158,16 +163,18 @@ export default function MessagePanel({
     lastGroupSenderName = isGroup && !mine ? senderName : "";
     const bubble = (
       <div
-        className={`max-w-[68%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap ${
+        title={m.pending ? "发送中" : formatMessageTime(m.createdAt)}
+        className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap ${
           mine
             ? m.pending
-              ? "bg-[#d6b4fc] text-white/90"
-              : "bg-[#0ea5e9] text-white"
+              ? "bg-[#8199b3] text-white/90"
+              : "bg-[#345d88] text-white"
             : "bg-white text-[#262626] shadow-sm"
         }`}
       >
         {/* 纯文本节点渲染（React 自动转义，防 XSS） */}
         {m.content}
+        <span className={`mt-1 block text-[10px] ${mine ? "text-white/70" : "text-[#8c8c8c]"}`}>{m.pending ? "发送中…" : formatMessageTime(m.createdAt)}</span>
       </div>
     );
     items.push(
@@ -181,13 +188,13 @@ export default function MessagePanel({
               <Spin size="small" style={{ marginInlineEnd: 2 }} />
             )}
             {bubble}
-            <Avatar size={30} style={{ background: moduleGradient("#00c896"), fontSize: 13, flexShrink: 0 }}>
-              {String(meId).slice(-1)}
+            <Avatar size={30} style={{ background: moduleGradient("#61778e"), fontSize: 13, flexShrink: 0 }}>
+              {meName.slice(0, 1)}
             </Avatar>
           </>
         ) : (
           <>
-            <Avatar size={30} style={{ background: moduleGradient("#0ea5e9"), fontSize: 13, flexShrink: 0 }}>
+            <Avatar size={30} style={{ background: moduleGradient("#345d88"), fontSize: 13, flexShrink: 0 }}>
               {(isGroup ? senderName : active.kind === "single" ? active.peer.displayName || active.peer.username : "")
                 .slice(0, 1)
                 .toUpperCase() || "?"}
@@ -213,10 +220,11 @@ export default function MessagePanel({
     <div className="flex h-full min-w-0 flex-1 flex-col bg-[#f5f6fa]">
       {/* 会话头 */}
       <div className="flex shrink-0 items-center justify-between border-b border-[#f0f0f0] bg-white px-4 py-2.5">
+        <Button className="chat-back" type="text" aria-label="返回会话列表" icon={<ArrowLeftOutlined />} onClick={onBack} />
         {active.kind === "single" ? (
           <div className="flex min-w-0 items-center gap-2.5">
             <Badge dot color={active.peer.online ? "#52c41a" : "#d9d9d9"} offset={[-2, 34]}>
-              <Avatar size={36} style={{ background: moduleGradient("#0ea5e9") }}>
+              <Avatar size={36} style={{ background: moduleGradient("#345d88") }}>
                 {(active.peer.displayName || active.peer.username).slice(0, 1).toUpperCase()}
               </Avatar>
             </Badge>
@@ -231,7 +239,7 @@ export default function MessagePanel({
           </div>
         ) : (
           <div className="flex min-w-0 items-center gap-2.5">
-            <Avatar size={36} icon={<TeamOutlined />} style={{ background: moduleGradient("#00c896") }} />
+            <Avatar size={36} icon={<TeamOutlined />} style={{ background: moduleGradient("#61778e") }} />
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-[#262626]">{active.name}</div>
               <div className="text-[11px] text-[#8c8c8c]">群聊 · {active.memberCount}人</div>
@@ -241,6 +249,7 @@ export default function MessagePanel({
         <Tooltip title="实时通道状态">{statusTag}</Tooltip>
       </div>
 
+      {historyError && <Alert type="error" title="聊天记录加载失败" action={<Button size="small" onClick={onRetry}>重试</Button>} />}
       {/* 气泡流 */}
       <div
         ref={scrollRef}
@@ -253,6 +262,7 @@ export default function MessagePanel({
           </div>
         ) : (
           <>
+            {hasMore && <div className="text-center"><Button type="text" size="small" loading={loadingMore} onClick={loadEarlier}>加载更早的消息</Button></div>}
             {loadingMore && (
               <div className="flex justify-center py-1">
                 <Spin size="small" />
@@ -284,7 +294,7 @@ export default function MessagePanel({
                     key={e}
                     type="button"
                     className="cursor-pointer rounded p-1 text-lg hover:bg-[#f0f0f0]"
-                    onClick={() => setText((t) => (t + e).slice(0, CONTENT_MAX))}
+                    onClick={() => setText((text + e).slice(0, CONTENT_MAX))}
                   >
                     {e}
                   </button>
@@ -300,11 +310,13 @@ export default function MessagePanel({
         </div>
         <div className="flex items-end gap-2">
           <Input.TextArea
+            aria-label="聊天消息"
+            disabled={loadingHistory || historyError}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={isGroup ? "输入群消息…" : "输入消息…"}
-            autoSize={{ minRows: 1, maxRows: 4 }}
+            autoSize={{ minRows: 2, maxRows: 5 }}
             maxLength={CONTENT_MAX}
             style={{ resize: "none" }}
           />
@@ -313,7 +325,6 @@ export default function MessagePanel({
             icon={<SendOutlined />}
             disabled={!inputOk}
             onClick={doSend}
-            style={{ background: "#0ea5e9" }}
           >
             发送
           </Button>

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Drawer } from "antd";
-import { TeamOutlined } from "@ant-design/icons";
+import { Alert, App, Button, Drawer } from "antd";
+import { PlusOutlined, TeamOutlined } from "@ant-design/icons";
 import ConversationList, { type SelectablePeer } from "./ConversationList";
 import MessagePanel, { type ActiveHeader } from "./MessagePanel";
 import OnlinePanel from "./OnlinePanel";
@@ -18,7 +18,7 @@ import type {
 import { CHAT_GROUP_API, chatApiFetch, localChatFetch, sanitizeContent } from "@/core/chat";
 
 /**
- * 聊天页主体（chat-module）：左 = 会话列表；中 = 消息气泡流 + 输入框；右 = 在线用户面板（v2 常驻，<1280px 折叠抽屉）。
+ * 聊天页主体：会话列表与聊天区两栏布局，联系人按需在抽屉展开。
  *
  * 数据流约定（与架构文档 §1.3/§1.4/§1.5 一致）：
  * - 读：会话列表/历史消息走本地只读 Handler（db 直连），联系人/在线状态走后端 REST；
@@ -42,7 +42,7 @@ function newClientId(): string {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export default function ChatWorkspace({ meId }: Props) {
+export default function ChatWorkspace({ meId, meName }: Props) {
   const { message } = App.useApp();
 
   const [contacts, setContacts] = useState<ChatContact[]>([]);
@@ -57,15 +57,12 @@ export default function ChatWorkspace({ meId }: Props) {
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [onlinePanelOpen, setOnlinePanelOpen] = useState(false);
 
-  // 右栏响应式：<1280px 折叠为悬浮按钮 + Drawer
-  const [isNarrow, setIsNarrow] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 1279px)");
-    const update = () => setIsNarrow(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
+  const [listError, setListError] = useState(false);
+  const [contactsError, setContactsError] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
+  const historyRequest = useRef(0);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const activeKey = activeConv ? activeConv.kind === "single" ? `single-${activeConv.peerId}` : `group-${activeConv.conversationId}` : "";
 
   // WS API 桥接 ref：send/sendFrame/markRead 在 hook 调用之后才存在，回调经此转发
   const wsRef = useRef<{
@@ -94,10 +91,12 @@ export default function ChatWorkspace({ meId }: Props) {
   // ---------- 数据加载 ----------
 
   const loadConversations = useCallback(async () => {
+    setListError(false);
     try {
       const data = await localChatFetch<ChatConversationItem[]>("/conversations");
       setConversations(data);
     } catch (e) {
+      setListError(true);
       console.error("[chat] 会话列表加载失败:", e);
     } finally {
       setLoadingList(false);
@@ -107,11 +106,13 @@ export default function ChatWorkspace({ meId }: Props) {
   const loadContacts = useCallback(async () => {
     try {
       const data = await chatApiFetch<ChatContact[]>("/contacts");
-      setContacts(data);
+      setContacts(data.filter(c => c.id !== meId));
+      setContactsError(false);
     } catch (e) {
+      setContactsError(true);
       console.error("[chat] 联系人加载失败:", e);
     }
-  }, []);
+  }, [meId]);
 
   /**
    * v3：删除会话（单个/批量）：微信式「仅从我的列表移除」。
@@ -138,6 +139,8 @@ export default function ChatWorkspace({ meId }: Props) {
               : c.type === "group" && c.conversationId === conv.conversationId
           );
         if (activeDeleted) {
+          ++historyRequest.current;
+          activeConvRef.current = null;
           setActiveConv(null);
         }
         void message.success(`已删除 ${data.deleted} 个会话`);
@@ -166,7 +169,11 @@ export default function ChatWorkspace({ meId }: Props) {
 
   const openSingle = useCallback(
     async (peer: SelectablePeer) => {
-      setActiveConv({ kind: "single", peerId: peer.id });
+      const request = ++historyRequest.current;
+      setHistoryError(false);
+      setLoadingMore(false);
+      activeConvRef.current = { kind: "single", peerId: peer.id };
+      setActiveConv(activeConvRef.current);
       setMessages([]);
       setPendings([]);
       setHasMore(false);
@@ -175,12 +182,16 @@ export default function ChatWorkspace({ meId }: Props) {
         const data = await localChatFetch<{ messages: ChatMessageItem[]; hasMore: boolean }>(
           `/messages?peerId=${peer.id}`
         );
-        setMessages(data.messages);
+        if (request !== historyRequest.current) return;
+        setMessages(prev => [...new Map([...data.messages, ...prev].map(m => [m.id, m])).values()].sort((a, b) => a.id - b.id));
         setHasMore(data.hasMore);
       } catch (e) {
+        if (request !== historyRequest.current) return;
+        setHistoryError(true);
         console.error("[chat] 历史消息加载失败:", e);
+        return;
       } finally {
-        setLoadingHistory(false);
+        if (request === historyRequest.current) setLoadingHistory(false);
       }
       // 进入会话未读清零（DB 由 WS read 帧 / HTTP read 兜底落库）
       setConversations((prev) =>
@@ -194,7 +205,11 @@ export default function ChatWorkspace({ meId }: Props) {
   /** v2：打开群会话（群历史读走本地只读 Handler，已读走 REST） */
   const openGroup = useCallback(
     async (conversationId: number) => {
-      setActiveConv({ kind: "group", conversationId });
+      const request = ++historyRequest.current;
+      setHistoryError(false);
+      setLoadingMore(false);
+      activeConvRef.current = { kind: "group", conversationId };
+      setActiveConv(activeConvRef.current);
       setMessages([]);
       setPendings([]);
       setHasMore(false);
@@ -203,12 +218,16 @@ export default function ChatWorkspace({ meId }: Props) {
         const data = await localChatFetch<{ messages: ChatMessageItem[]; hasMore: boolean }>(
           `/groups/${conversationId}/messages`
         );
-        setMessages(data.messages);
+        if (request !== historyRequest.current) return;
+        setMessages(prev => [...new Map([...data.messages, ...prev].map(m => [m.id, m])).values()].sort((a, b) => a.id - b.id));
         setHasMore(data.hasMore);
       } catch (e) {
+        if (request !== historyRequest.current) return;
+        setHistoryError(true);
         console.error("[chat] 群历史消息加载失败:", e);
+        return;
       } finally {
-        setLoadingHistory(false);
+        if (request === historyRequest.current) setLoadingHistory(false);
       }
       setConversations((prev) =>
         prev.map((c) => (c.type === "group" && c.conversationId === conversationId ? { ...c, unread: 0 } : c))
@@ -223,6 +242,7 @@ export default function ChatWorkspace({ meId }: Props) {
     if (conv == null || loadingMore) return;
     const first = messagesRef.current[0];
     if (!first) return;
+    const request = historyRequest.current;
     setLoadingMore(true);
     try {
       const path =
@@ -230,6 +250,7 @@ export default function ChatWorkspace({ meId }: Props) {
           ? `/messages?peerId=${conv.peerId}&beforeId=${first.id}`
           : `/groups/${conv.conversationId}/messages?beforeId=${first.id}`;
       const data = await localChatFetch<{ messages: ChatMessageItem[]; hasMore: boolean }>(path);
+      if (request !== historyRequest.current) return;
       // 按 id 去重后前插（保持 id 升序）
       setMessages((prev) => {
         const seen = new Set(prev.map((m) => m.id));
@@ -237,11 +258,12 @@ export default function ChatWorkspace({ meId }: Props) {
       });
       setHasMore(data.hasMore);
     } catch (e) {
+      notify("加载历史消息失败，请重试");
       console.error("[chat] 加载更多失败:", e);
     } finally {
-      setLoadingMore(false);
+      if (request === historyRequest.current) setLoadingMore(false);
     }
-  }, [loadingMore]);
+  }, [loadingMore, notify]);
 
   // ---------- 消息合并 ----------
 
@@ -280,7 +302,9 @@ export default function ChatWorkspace({ meId }: Props) {
         const conv = { ...next[idx] };
         conv.lastMessage = { id: messageId, preview, senderId, createdAt };
         conv.lastMessageAt = createdAt;
-        if (!isMine) conv.unread = conv.unread + 1;
+        const active = activeConvRef.current;
+        if (active?.kind === "single" && active.peerId === peerId) conv.unread = 0;
+        else if (!isMine) conv.unread += 1;
         next.splice(idx, 1);
         next.unshift(conv);
         return next;
@@ -310,7 +334,9 @@ export default function ChatWorkspace({ meId }: Props) {
         const conv = { ...next[idx] };
         conv.lastMessage = { id: messageId, preview, senderId, senderName, createdAt };
         conv.lastMessageAt = createdAt;
-        if (!isMine) conv.unread = conv.unread + 1;
+        const active = activeConvRef.current;
+        if (active?.kind === "group" && active.conversationId === conversationId) conv.unread = 0;
+        else if (!isMine) conv.unread += 1;
         next.splice(idx, 1);
         next.unshift(conv);
         return next;
@@ -326,6 +352,15 @@ export default function ChatWorkspace({ meId }: Props) {
       const conv = activeConvRef.current;
       const content = sanitizeContent(raw);
       if (conv == null || content == null) return;
+      const origin = activeConvRef.current;
+      const accept = (msg: ChatMessageItem) => {
+        if (activeConvRef.current === origin) replacePending(msg, clientId);
+        void loadConversations();
+      };
+      const restoreDraft = () => {
+        const key = conv.kind === "single" ? `single-${conv.peerId}` : `group-${conv.conversationId}`;
+        setDrafts(prev => ({ ...prev, [key]: prev[key] ? `${prev[key]}\n${content}` : content }));
+      };
       const clientId = newClientId();
       setPendings((prev) => [...prev, { clientId, content }]);
       if (conv.kind === "single") {
@@ -336,10 +371,11 @@ export default function ChatWorkspace({ meId }: Props) {
             method: "POST",
             body: JSON.stringify({ toUserId: conv.peerId, content, clientId }),
           })
-            .then((msg) => replacePending(msg, clientId))
+            .then(accept)
             .catch((e) => {
               setPendings((prev) => prev.filter((p) => p.clientId !== clientId));
-              notify(e instanceof Error ? e.message : "发送失败");
+              restoreDraft();
+              notify(e instanceof Error ? e.message : "发送失败，内容已恢复到草稿");
             });
         }
         return;
@@ -351,14 +387,15 @@ export default function ChatWorkspace({ meId }: Props) {
           method: "POST",
           body: JSON.stringify({ content, clientId }),
         })
-          .then((msg) => replacePending(msg, clientId))
+          .then(accept)
           .catch((e) => {
             setPendings((prev) => prev.filter((p) => p.clientId !== clientId));
-            notify(e instanceof Error ? e.message : "发送失败");
+            restoreDraft();
+              notify(e instanceof Error ? e.message : "发送失败，内容已恢复到草稿");
           });
       }
     },
-    [notify, replacePending]
+    [notify, replacePending, loadConversations]
   );
 
   // ---------- WebSocket（帧协议与后端 ChatWebSocketHandler 一致） ----------
@@ -378,7 +415,7 @@ export default function ChatWorkspace({ meId }: Props) {
             : `/groups/${conv.conversationId}/messages?afterId=${maxId}`;
         void localChatFetch<{ messages: ChatMessageItem[]; hasMore: boolean }>(path)
           .then((data) =>
-            setMessages((prev) => {
+            activeConvRef.current !== conv ? undefined : setMessages((prev) => {
               const seen = new Set(prev.map((m) => m.id));
               return [...prev, ...data.messages.filter((m) => !seen.has(m.id))].sort((a, b) => a.id - b.id);
             })
@@ -429,7 +466,7 @@ export default function ChatWorkspace({ meId }: Props) {
       // ---- v1 单聊路径（原样保留） ----
       if (frame.from === meId) {
         // 自己的 ack / 多端回显：按 clientId 替换乐观气泡
-        replacePending(
+        if (activeConvRef.current?.kind === "single" && activeConvRef.current.peerId === frame.to) replacePending(
           {
             id: frame.messageId,
             conversationId: frame.conversationId,
@@ -564,11 +601,17 @@ export default function ChatWorkspace({ meId }: Props) {
   );
 
   return (
-    <div
-      className="flex overflow-hidden rounded-lg border border-[#f0f0f0] bg-white"
-      style={{ height: "calc(100dvh - 152px)" }}
-    >
-      <div className="w-[300px] shrink-0">
+    <section className="chat-workspace" aria-label="聊天会话">
+      <header className="chat-page-header">
+        <div><h1>聊天会话</h1><p>与团队保持沟通，让协作在会话中继续。</p></div>
+        <div className="chat-page-actions">
+          <Button icon={<TeamOutlined />} onClick={() => setOnlinePanelOpen(true)}>联系人</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateGroupOpen(true)}>发起会话</Button>
+        </div>
+      </header>
+      {listError && <Alert type="error" title="会话列表加载失败" action={<Button size="small" onClick={() => void loadConversations()}>重试</Button>} />}
+      <div className={`chat-layout ${activeConv ? "chat-has-active" : ""}`}>
+      <aside className="chat-conversations">
         <ConversationList
           conversations={conversations}
           contacts={contacts}
@@ -579,9 +622,18 @@ export default function ChatWorkspace({ meId }: Props) {
           onSelectGroup={(id) => void openGroup(id)}
           onDeleteConversations={(ids) => void handleDeleteConversations(ids)}
         />
-      </div>
+      </aside>
+      <div className="chat-main">
       <MessagePanel
+        key={activeKey}
+        draft={drafts[activeKey] || ""}
+        onDraftChange={value => setDrafts(prev => ({ ...prev, [activeKey]: value }))}
+        historyError={historyError}
+        onRetry={() => { if (activeHeader?.kind === "single") void openSingle(activeHeader.peer); else if (activeHeader?.kind === "group") void openGroup(activeHeader.conversationId); }}
+        onBack={() => { ++historyRequest.current; activeConvRef.current = null; setActiveConv(null); }}
+        onStart={() => setCreateGroupOpen(true)}
         meId={meId}
+        meName={meName}
         active={activeHeader}
         messages={displayMessages}
         loadingHistory={loadingHistory}
@@ -591,34 +643,15 @@ export default function ChatWorkspace({ meId }: Props) {
         onLoadMore={() => void loadMore()}
         onSend={sendMessage}
       />
-      {/* 右栏在线面板：≥1280px 常驻 */}
-      {!isNarrow && <div className="w-[240px] shrink-0 border-l border-[#f0f0f0]">{onlinePanel}</div>}
-
-      {/* <1280px：悬浮按钮 + 抽屉 */}
-      {isNarrow && (
-        <>
-          <Button
-            type="primary"
-            shape="circle"
-            size="large"
-            icon={<TeamOutlined />}
-            style={{ background: "#0ea5e9", position: "fixed", right: 24, bottom: 24, zIndex: 30 }}
-            onClick={() => setOnlinePanelOpen(true)}
-          />
-          <Drawer
-            open={onlinePanelOpen}
-            onClose={() => setOnlinePanelOpen(false)}
-            placement="right"
-            width={280}
-            title="在线用户"
-            styles={{ body: { padding: 0 } }}
-          >
-            {onlinePanel}
-          </Drawer>
-        </>
-      )}
-
+      </div>
+      </div>
+      <Drawer open={onlinePanelOpen} onClose={() => setOnlinePanelOpen(false)} placement="right" size={320} title="团队联系人" styles={{ body: { padding: 0 } }}>
+        {contactsError && <Alert type="error" title="联系人加载失败" action={<Button onClick={() => void loadContacts()}>重试</Button>} />}
+        {onlinePanel}
+      </Drawer>
       <CreateGroupModal
+        loadError={contactsError}
+        onRetry={() => void loadContacts()}
         open={createGroupOpen}
         contacts={contacts}
         onClose={() => setCreateGroupOpen(false)}
@@ -629,6 +662,6 @@ export default function ChatWorkspace({ meId }: Props) {
           void openGroup(conversationId);
         }}
       />
-    </div>
+    </section>
   );
 }

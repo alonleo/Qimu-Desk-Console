@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { App, Avatar, Button, Checkbox, Empty, Input, Modal } from "antd";
+import { Alert, App, Avatar, Button, Checkbox, Empty, Input, Modal } from "antd";
 import { SearchOutlined, TeamOutlined } from "@ant-design/icons";
 import { moduleGradient } from "../modules";
 import type { ChatContact } from "@/core/chat";
@@ -17,6 +17,8 @@ import type { SelectablePeer } from "./ConversationList";
  */
 
 type Props = {
+  loadError?: boolean;
+  onRetry?: () => void;
   open: boolean;
   contacts: ChatContact[];
   /** 预选用户 id（从在线面板建群入口带入时可用；当前未使用预留） */
@@ -29,7 +31,7 @@ type Props = {
 };
 
 export default function CreateGroupModal({
-  open,
+  open, loadError, onRetry,
   contacts,
   preselectedIds,
   onClose,
@@ -104,8 +106,8 @@ export default function CreateGroupModal({
       open={open}
       title={
         <span className="inline-flex items-center gap-2">
-          <TeamOutlined style={{ color: "#0ea5e9" }} />
-          发起群聊
+          <TeamOutlined style={{ color: "#345d88" }} />
+          发起会话
         </span>
       }
       onCancel={() => {
@@ -117,11 +119,13 @@ export default function CreateGroupModal({
         <Button key="cancel" disabled={submitting} onClick={onClose}>
           取消
         </Button>,
-        <Button key="ok" type="primary" loading={submitting} disabled={submitDisabled} style={{ background: "#0ea5e9" }} onClick={handleSubmit}>
+        <Button key="ok" type="primary" loading={submitting} disabled={submitDisabled} style={{ background: "#345d88" }} onClick={handleSubmit}>
           {selectedCount === 1 ? "发单聊" : `创建群聊${selectedCount > 0 ? `（${selectedCount + 1} 人）` : ""}`}
         </Button>,
       ]}
     >
+      {loadError && <Alert type="error" title="联系人加载失败" action={<Button onClick={onRetry}>重试</Button>} className="mb-3" />}
+      <p className="mb-3 text-xs text-[#778697]">选择一位同事开始单聊，选择多位同事创建群聊。</p>
       <div className="mb-2">
         <Input
           allowClear
@@ -151,7 +155,7 @@ export default function CreateGroupModal({
                     setSelectedIds((prev) => (e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id)))
                   }
                 />
-                <Avatar size={28} style={{ background: moduleGradient("#0ea5e9"), fontSize: 12 }}>
+                <Avatar size={28} style={{ background: moduleGradient("#345d88"), fontSize: 12 }}>
                   {name.slice(0, 1).toUpperCase()}
                 </Avatar>
                 <div className="min-w-0 flex-1">

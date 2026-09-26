@@ -41,12 +41,12 @@ export default function OnlinePanel({ contacts, activePeer, onOpenSingle, onCrea
   const filtered = useMemo(
     () =>
       kw
-        ? onlineContacts.filter((c) => {
+        ? contacts.filter((c) => {
             const name = (c.displayName || c.username).toLowerCase();
             return name.includes(kw) || c.username.toLowerCase().includes(kw);
           })
-        : onlineContacts,
-    [onlineContacts, kw]
+        : [...contacts].sort((a, b) => Number(b.online) - Number(a.online)),
+    [contacts, kw]
   );
 
   return (
@@ -54,12 +54,12 @@ export default function OnlinePanel({ contacts, activePeer, onOpenSingle, onCrea
       {/* 标题 + 建群入口 */}
       <div className="shrink-0 px-3 pb-2 pt-3">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-sm font-semibold text-[#262626]">在线 ({onlineContacts.length})</span>
+          <span className="text-sm font-semibold text-[#262626]">联系人 · {onlineContacts.length} 人在线</span>
           <Button
             size="small"
             type="primary"
             icon={<PlusOutlined />}
-            style={{ background: "#0ea5e9" }}
+            style={{ background: "#345d88" }}
             onClick={onCreateGroup}
           >
             发起群聊
@@ -69,7 +69,7 @@ export default function OnlinePanel({ contacts, activePeer, onOpenSingle, onCrea
           allowClear
           size="small"
           prefix={<SearchOutlined style={{ color: "#bfbfbf" }} />}
-          placeholder="搜索在线用户"
+          placeholder="搜索联系人"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -81,27 +81,28 @@ export default function OnlinePanel({ contacts, activePeer, onOpenSingle, onCrea
           <div className="py-8">
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={kw ? "没有匹配的在线用户" : "暂无在线用户"}
+              description={kw ? "没有匹配的联系人" : "暂无联系人"}
             />
           </div>
         ) : (
           filtered.map((u) => {
             const name = u.displayName || u.username;
             return (
-              <div
+              <button
+                type="button"
                 key={u.id}
-                onClick={() => onOpenSingle({ id: u.id, username: u.username, displayName: name, online: true })}
-                className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-[#fafafa]"
+                onClick={() => onOpenSingle({ id: u.id, username: u.username, displayName: name, online: u.online })}
+                className="flex w-full cursor-pointer items-center gap-2.5 border-0 bg-white px-3 py-2 text-left hover:bg-[#fafafa]"
               >
-                <Avatar size={32} style={{ background: moduleGradient("#0ea5e9"), fontSize: 13 }}>
+                <Avatar size={32} style={{ background: moduleGradient("#345d88"), fontSize: 13 }}>
                   {name.slice(0, 1).toUpperCase()}
                 </Avatar>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm text-[#262626]">{name}</div>
                   <div className="truncate text-[11px] text-[#8c8c8c]">@{u.username}</div>
                 </div>
-                <Badge dot color="#52c41a" offset={[-2, 2]} />
-              </div>
+                <Badge dot color={u.online ? "#52c41a" : "#bfbfbf"} offset={[-2, 2]} />
+              </button>
             );
           })
         )}
@@ -113,7 +114,7 @@ export default function OnlinePanel({ contacts, activePeer, onOpenSingle, onCrea
           <div className="mb-2 text-[11px] text-[#bfbfbf]">当前会话</div>
           <div className="flex items-center gap-2.5">
             <Badge dot color={activePeer.online ? "#52c41a" : "#d9d9d9"} offset={[-2, 30]}>
-              <Avatar size={36} style={{ background: moduleGradient("#0ea5e9") }}>
+              <Avatar size={36} style={{ background: moduleGradient("#345d88") }}>
                 {(activePeer.displayName || activePeer.username).slice(0, 1).toUpperCase()}
               </Avatar>
             </Badge>
