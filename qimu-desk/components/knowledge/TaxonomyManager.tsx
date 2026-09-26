@@ -64,7 +64,7 @@ export default function TaxonomyManager({ open, onClose, onChanged }: {
     finally { busyRef.current = false; setBusy(false); }
   }
 
-  return <Drawer title="管理分类和标签" open={open} onClose={() => { if (!busy) onClose(); }} closable={!busy} maskClosable={!busy} keyboard={!busy} size={440}>
+  return <Drawer title="管理分类和标签" open={open} onClose={() => { if (!busy) onClose(); }} closable={!busy} maskClosable={!busy} keyboard={!busy} size="min(440px, 100vw)">
     <div className={styles.taxonomy}>
       <Segmented block value={kind} disabled={busy} onChange={(value) => setKind(value as Kind)} options={[{ label: "分类", value: "categories" }, { label: "标签", value: "tags" }]} />
       <p className={styles.taxonomyHint}>{kind === "categories" ? "分类供整个知识库使用。删除后，文档移到“未分类”，正文保留。" : "新增标签可直接用于文档。删除标签会移除所有文档中的同名标签，正文保留。"}</p>
