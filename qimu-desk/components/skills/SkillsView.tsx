@@ -43,7 +43,7 @@ import {
 import type { SkillType, RunItem, SkillRecord, RunResult } from "@/core/skills";
 import SourceTag from "@/components/SourceTag";
 import VisibilityTag from "@/components/VisibilityTag";
-import RunOutput from "@/components/skills/RunOutput";
+import ResultWorkspace from "@/components/automation/ResultWorkspace";
 import YamlBlock from "@/components/skills/YamlBlock";
 import styles from "./SkillsView.module.css";
 
@@ -131,6 +131,7 @@ export default function SkillsView({
   const [refreshError, setRefreshError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState("");
   const [result, setResult] = useState<RunResult | null>(null);
   const [tab, setTab] = useState("execute");
   const [form] = Form.useForm<Record<string, string>>();
@@ -261,6 +262,7 @@ export default function SkillsView({
     if (runLock.current) return;
     setSelected(skill);
     setResult(null);
+    setRunError("");
     setTab(runId === undefined ? "execute" : "history");
     setDrawerRuns([]);
     resetParams(skill);
@@ -268,6 +270,7 @@ export default function SkillsView({
   }
   function showRun(run: RunItem) {
     if (run.status !== "success" && run.status !== "failed") return;
+    setRunError("");
     setResult({
       runId: run.id,
       status: run.status,
@@ -289,6 +292,7 @@ export default function SkillsView({
     }
     setRunning(true);
     setResult(null);
+    setRunError("");
     setTab("result");
     try {
       const data: RunResult = await fetch(`/api/skills/${selected.id}/run`, {
@@ -303,9 +307,9 @@ export default function SkillsView({
       );
       await loadDetail(selected);
     } catch (e) {
-      message.error(
-        (e as Error).message || "执行请求失败，请查看运行历史后再重试",
-      );
+      const error = (e as Error).message || "执行请求失败，请查看运行历史后再重试";
+      setRunError(error);
+      message.error(error);
     } finally {
       runLock.current = false;
       setRunning(false);
@@ -313,8 +317,23 @@ export default function SkillsView({
     }
   }
 
-  return (
-    <div className={styles.page}>
+  const readingResult = !!selected && tab === "result";
+  const resultRuns = result && !drawerRuns.some(r => r.id === result.runId)
+    ? [{ id: result.runId, started_at: null, duration_ms: result.durationMs, status: result.status }, ...drawerRuns]
+    : drawerRuns;
+  return (<>
+    {readingResult && <ResultWorkspace
+      title={selected.displayName || selected.name} subtitle="技能 / 执行结果"
+      status={running ? <Spin size="small" /> : result && <RunStatus status={result.status} />}
+      navigationTitle="运行记录" entries={resultRuns.map(r => ({ id: String(r.id), disabled: running, title: `运行 #${r.id}`, detail: `${fmtTime(r.started_at)} · ${fmtDuration(r.duration_ms)}`, status: <RunStatus status={r.status} /> }))}
+      activeId={result ? String(result.runId) : undefined}
+      onSelect={id => { if (running) return; const run = drawerRuns.find(r => String(r.id) === id); if (run) showRun(run); }}
+      onBack={() => setTab("execute")} outputTitle={result ? `运行 #${result.runId}` : "执行结果"}
+      output={result?.output || ""} loading={running}
+      notice={runError || result?.error ? <Alert type="error" showIcon title={runError || result?.error} /> : detailError ? <Alert type="warning" title={detailError} /> : undefined}
+      emptyText="本次执行没有输出，可返回参数后重新执行。"
+    />}
+    <div className={styles.page} style={readingResult ? { display: "none" } : undefined}>
       <header className={styles.heading}>
         <div>
           <div className={styles.eyebrow}>工作台 / 自动化</div>
@@ -557,14 +576,14 @@ export default function SkillsView({
             <div>
               <strong>从一次执行开始</strong>
               <p>
-                打开技能，确认参数后执行。在独立的执行结果页签查看输出，也可从运行历史重新打开。
+                打开技能，确认参数后执行。在宽幅结果页阅读输出，也可从运行历史重新打开。
               </p>
             </div>
           </div>
         </aside>
       </div>
       <Drawer
-        open={!!selected}
+        open={!!selected && tab !== "result"}
         onClose={() => {
           if (runLock.current) return;
           detailRequest.current++;
@@ -606,6 +625,7 @@ export default function SkillsView({
                 }
               />
             )}
+            {(result || running) && <Button onClick={() => setTab("result")}>打开执行结果</Button>}
             <Tabs
               activeKey={tab}
               onChange={setTab}
@@ -678,55 +698,6 @@ export default function SkillsView({
                         {running ? "正在执行，请稍候…" : "执行技能"}
                       </Button>
                     </>
-                  ),
-                },
-                {
-                  key: "result",
-                  label: "执行结果",
-                  children: (
-                    <section className={styles.result} aria-live="polite">
-                      <div className={styles.executionHeading}>
-                        <h3>
-                          {result ? `执行结果 #${result.runId}` : "执行结果"}
-                        </h3>
-                        {result && (
-                          <Typography.Text
-                            copyable={{ text: result.output || result.error }}
-                          >
-                            复制结果
-                          </Typography.Text>
-                        )}
-                      </div>
-                      {running ? (
-                        <div className={styles.resultEmpty}>
-                          <Spin />
-                          <p>正在处理，结果将在完成后显示。</p>
-                        </div>
-                      ) : result ? (
-                        <>
-                          <div className={styles.resultMeta}>
-                            <RunStatus status={result.status} />
-                            <span>耗时 {fmtDuration(result.durationMs)}</span>
-                          </div>
-                          {result.error && (
-                            <Alert
-                              type="error"
-                              title={result.error}
-                              showIcon
-                            />
-                          )}
-                          <RunOutput
-                            key={result.runId}
-                            output={result.output || ""}
-                            maxHeight={600}
-                          />
-                        </>
-                      ) : (
-                        <p className={styles.resultEmpty}>
-                          执行技能或选择历史记录后，在这里查看结果。
-                        </p>
-                      )}
-                    </section>
                   ),
                 },
                 {
@@ -806,5 +777,5 @@ export default function SkillsView({
         )}
       </Drawer>
     </div>
-  );
+  </>);
 }
