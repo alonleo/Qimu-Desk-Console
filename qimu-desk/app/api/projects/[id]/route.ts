@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { row, exec } from "@/core/db";
+import { row, exec, withTransaction } from "@/core/db";
 import { requireUser, jsonError, readJson, assertOrigin } from "@/core/api";
 import { projectUpdateSchema, firstZodError } from "@/core/schemas";
 import { canEditRow } from "@/core/visibility";
@@ -55,6 +55,10 @@ export async function PATCH(
     fields.push("color = ?");
     values.push(body.color ?? null);
   }
+  if (body.visibility !== undefined) {
+    fields.push("visibility = ?");
+    values.push(body.visibility);
+  }
   if (body.status !== undefined) {
     fields.push("status = ?");
     values.push(body.status);
@@ -90,6 +94,9 @@ export async function DELETE(
   const check = canWriteCheck(user, existing);
   if (!check.allowed) return jsonError(check.msg, check.status);
 
-  await exec("DELETE FROM projects WHERE id = ?", [id]);
+  await withTransaction(async tx => {
+    await tx.exec("UPDATE tasks SET project_id = NULL, updated_at = NOW() WHERE project_id = ?", [id]);
+    await tx.exec("DELETE FROM projects WHERE id = ?", [id]);
+  });
   return NextResponse.json({ ok: true });
 }

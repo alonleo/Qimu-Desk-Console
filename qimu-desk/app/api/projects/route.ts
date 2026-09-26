@@ -1,52 +1,18 @@
 import { NextResponse } from "next/server";
-import { rows, row, exec } from "@/core/db";
+import { row, exec } from "@/core/db";
 import { requireUser, jsonError, readJson, assertOrigin } from "@/core/api";
 import { projectCreateSchema, firstZodError } from "@/core/schemas";
-import { memberScopeSql, normalizeVisibility, defaultVisibility } from "@/core/visibility";
+import { normalizeVisibility, defaultVisibility } from "@/core/visibility";
+
+import { listProjects } from "@/core/projects";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   const user = await requireUser();
   if (!user) return jsonError("未登录", 401);
-
-  const scope = memberScopeSql(user, "p");
-  // 任务统计也按可见性过滤（member 不把他人 personal 任务计入项目进度）
-  const memberUser = user;
-  try {
-    const list = await rows(
-      `SELECT p.*,
-         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id
-          ${memberUser.role === "admin" ? "" : "AND (t.visibility = 'public' OR t.owner_id = ?)"} ) AS task_count,
-         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'done'
-          ${memberUser.role === "admin" ? "" : "AND (t.visibility = 'public' OR t.owner_id = ?)"} ) AS done_count,
-         (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status IN ('todo','doing','waiting')
-          ${memberUser.role === "admin" ? "" : "AND (t.visibility = 'public' OR t.owner_id = ?)"} ) AS open_count
-       FROM projects p
-       WHERE p.status != 'archived'${scope.clause ? " AND " + scope.clause.replace(/^\s*AND\s*/, "") : ""}
-       GROUP BY p.id
-       ORDER BY p.id`,
-      memberUser.role === "admin" ? [] : [memberUser.id, memberUser.id, memberUser.id, ...scope.params]
-    );
-    return NextResponse.json({ projects: list });
-  } catch (e) {
-    // 缺列降级：去掉 owner_name JOIN、scope 过滤
-    if ((e as { errno?: number }).errno === 1054) {
-      const list = await rows(
-        `SELECT p.*,
-          COUNT(t.id) AS task_count,
-          SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS done_count,
-          SUM(CASE WHEN t.status IN ('todo','doing','waiting') THEN 1 ELSE 0 END) AS open_count
-         FROM projects p
-         LEFT JOIN tasks t ON t.project_id = p.id
-         WHERE p.status != 'archived'
-         GROUP BY p.id
-         ORDER BY p.id`
-      );
-      return NextResponse.json({ projects: list });
-    }
-    throw e;
-  }
+  const includeArchived = new URL(req.url).searchParams.get("includeArchived") === "1";
+  return NextResponse.json({ projects: await listProjects(user, includeArchived) });
 }
 
 export async function POST(req: Request) {
