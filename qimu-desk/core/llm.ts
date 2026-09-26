@@ -13,6 +13,9 @@ export type AiConfig = {
   api_key: string;
   model: string;
   temperature: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  timeout_seconds?: number;
   enabled: boolean;
   is_default: boolean;
 };
@@ -34,6 +37,9 @@ type AiConfigRow = {
   api_key: string;
   model: string;
   temperature: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  timeout_seconds?: number;
   enabled: number;
   is_default: number;
 };
@@ -47,6 +53,9 @@ function rowToConfig(r: AiConfigRow): AiConfig {
     api_key: r.api_key,
     model: r.model,
     temperature: r.temperature,
+    max_input_tokens: Number(r.max_input_tokens || 0),
+    max_output_tokens: Number(r.max_output_tokens || 0),
+    timeout_seconds: Number(r.timeout_seconds || 0),
     enabled: !!r.enabled,
     is_default: !!r.is_default,
   };
@@ -108,6 +117,9 @@ export async function saveAiConfig(cfg: {
   api_key?: string;
   model?: string;
   temperature?: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  timeout_seconds?: number;
   enabled?: boolean;
 }): Promise<AiConfig> {
   const cur = await getDefaultRow();
@@ -119,13 +131,16 @@ export async function saveAiConfig(cfg: {
     model: (cfg.model ?? cur?.model ?? "").trim(),
     temperature: cfg.temperature ?? cur?.temperature ?? 0.7,
     enabled: cfg.enabled ?? !!cur?.enabled,
+    max_input_tokens: cfg.max_input_tokens ?? cur?.max_input_tokens ?? 0,
+    max_output_tokens: cfg.max_output_tokens ?? cur?.max_output_tokens ?? 0,
+    timeout_seconds: cfg.timeout_seconds ?? cur?.timeout_seconds ?? 0,
   };
 
   if (cur) {
     await exec(
       `UPDATE ai_config SET
          name = ?, provider = ?, base_url = ?, api_key = ?, model = ?,
-         temperature = ?, enabled = ?, is_default = 1, updated_at = NOW()
+         temperature = ?, max_input_tokens = ?, max_output_tokens = ?, timeout_seconds = ?, enabled = ?, is_default = 1, updated_at = NOW()
        WHERE id = ?`,
       [
         next.name,
@@ -134,6 +149,7 @@ export async function saveAiConfig(cfg: {
         next.api_key,
         next.model,
         next.temperature,
+        next.max_input_tokens, next.max_output_tokens, next.timeout_seconds,
         next.enabled ? 1 : 0,
         cur.id,
       ]
@@ -142,8 +158,8 @@ export async function saveAiConfig(cfg: {
   }
 
   const info = await exec(
-    `INSERT INTO ai_config (name, provider, base_url, api_key, model, temperature, enabled, is_default)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    `INSERT INTO ai_config (name, provider, base_url, api_key, model, temperature, max_input_tokens, max_output_tokens, timeout_seconds, enabled, is_default)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     [
       next.name,
       next.provider,
@@ -151,6 +167,7 @@ export async function saveAiConfig(cfg: {
       next.api_key,
       next.model,
       next.temperature,
+      next.max_input_tokens, next.max_output_tokens, next.timeout_seconds,
       next.enabled ? 1 : 0,
     ]
   );
@@ -169,18 +186,47 @@ export function completionsUrl(baseUrl: string): string {
   return `${base}/chat/completions`;
 }
 
+export type GatewayLimits = Pick<AiConfig, "max_input_tokens" | "max_output_tokens" | "timeout_seconds">;
+
+/** 0 为自动；未提交字段保持不变。两端共享相同的取值边界。 */
+export function parseGatewayLimits(body: Record<string, unknown>): GatewayLimits {
+  const result: GatewayLimits = {};
+  const limits = { max_input_tokens: 2_000_000, max_output_tokens: 262_144, timeout_seconds: 600 };
+  for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
+    if (!(key in body)) continue;
+    const value = body[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > limits[key]) {
+      throw new Error(`${key} 必须是 0 到 ${limits[key]} 之间的整数（0 表示自动）`);
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+/** 本地预算采用保守文本估算，不声称等同于各模型 tokenizer 的精确计数。 */
+export function assertInputBudget(cfg: GatewayLimits, input: unknown): void {
+  if (!cfg.max_input_tokens) return;
+  const text = JSON.stringify(input) || "";
+  let ascii = 0, nonAscii = 0;
+  for (const char of text) { if (char.codePointAt(0)! < 128) ascii++; else nonAscii++; }
+  const estimated = Math.ceil(ascii / 3) + nonAscii * 2;
+  if (estimated > cfg.max_input_tokens) throw new Error(`输入上下文预计 ${estimated} tokens，超过此模型设置的 ${cfg.max_input_tokens} 上限。请减少历史消息或引用内容，或在模型设置中提高输入上限。`);
+}
+
 /** MiniMax 的生成预算包含推理过程，不能沿用普通模型的短回答额度。
  * reasoning_split 仅分离思考与正文，不关闭思考；其他兼容网关保持原参数。
  */
-export function generationOptions(cfg: Pick<AiConfig, "model">, maxTokens?: number) {
+export function generationOptions(cfg: Pick<AiConfig, "model" | "max_output_tokens">, maxTokens?: number) {
   const minimax = /(?:^|\/)minimax[- ]m[23](?:[.\s-]|$)/i.test(cfg.model);
+  const output = cfg.max_output_tokens || (minimax ? Math.max(maxTokens || 0, 16384) : maxTokens);
   return {
     ...(minimax ? { reasoning_split: true } : {}),
-    ...(minimax || maxTokens ? { max_tokens: minimax ? Math.max(maxTokens || 0, 16384) : maxTokens } : {}),
+    ...(output ? { max_tokens: output } : {}),
   };
 }
 
-function generationTimeout(cfg: AiConfig, fallback: number) {
+export function generationTimeout(cfg: AiConfig, fallback: number) {
+  if (cfg.timeout_seconds) return cfg.timeout_seconds * 1000;
   return generationOptions(cfg).reasoning_split ? 240_000 : fallback;
 }
 
@@ -203,6 +249,7 @@ export async function chatLlm(opts: {
   const timeout = generationTimeout(cfg, 90_000);
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
+    assertInputBudget(cfg, opts.messages);
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -279,6 +326,7 @@ export async function chatLlmStream(opts: {
   let content = "";
   let finishReason: string | undefined;
   try {
+    assertInputBudget(cfg, opts.messages);
     const res = await fetch(url, {
       method: "POST",
       headers: {

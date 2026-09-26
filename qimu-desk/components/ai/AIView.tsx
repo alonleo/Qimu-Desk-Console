@@ -30,6 +30,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import composerStyles from "./AIComposer.module.css";
+import GatewayLimitsModal from "@/components/ai/GatewayLimitsModal";
 import CapabilitiesDrawer from "@/components/ai/CapabilitiesDrawer";
 import ToolActivity from "@/components/ai/ToolActivity";
 import type { CapabilitySummary, ToolRun } from "@/core/ai/capability-schema";
@@ -136,6 +137,9 @@ type Gateway = {
   api_key: string; // 已是打码形态
   model: string;
   temperature: number;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+  timeout_seconds?: number;
   enabled: boolean;
   is_default: boolean;
   updated_at: string | null;
@@ -360,6 +364,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   const { message: appMessage, modal } = App.useApp();
 
   // —— 网关（chat + settings 共享） ——
+  const [editingLimits, setEditingLimits] = useState<Gateway | null>(null);
   const [gateways, setGateways] = useState<Gateway[] | null>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1960,12 +1965,11 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="AI 网关在「管理后台 → AI 网关」中统一管理"
+        message="模型参数与管理后台同步"
         description={
           <Space direction="vertical" size={6} style={{ width: "100%" }}>
             <Text type="secondary">
-              工作台侧只读展示所有网关，方便用户了解当前可用的 AI 模型；
-              新增 / 修改 / 删除 / 设为默认，请到管理后台完成。
+              {isAdmin ? "点击输入输出可设置每个模型的上下文、输出预算和超时。网关新增、删除及密钥管理请前往管理后台。" : "可查看当前模型参数；修改模型配置需要管理员权限。"}
             </Text>
             <Button
               type="primary"
@@ -1991,6 +1995,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
           tableLayout="fixed"
           pagination={false}
           dataSource={gateways}
+          scroll={{ x: 980 }}
           columns={
             [
               { title: "ID", dataIndex: "id", width: 52 },
@@ -2037,6 +2042,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                   </Tooltip>
                 ),
               },
+              { title: "输入 / 输出", width: 130, render: (_, g: Gateway) => `${g.max_input_tokens || "自动"} / ${g.max_output_tokens || "自动"}` },
               {
                 title: "状态",
                 dataIndex: "enabled",
@@ -2046,8 +2052,10 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
               {
                 title: "操作",
                 key: "actions",
-                width: 76,
+                width: isAdmin ? 180 : 76,
                 render: (_, g: Gateway) => (
+                  <Space>
+                  {isAdmin && <Button size="small" onClick={() => setEditingLimits(g)}>输入输出</Button>}
                   <Button
                     size="small"
                     icon={<ApiOutlined />}
@@ -2056,6 +2064,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                   >
                     测试
                   </Button>
+                  </Space>
                 ),
               },
             ] as ColumnsType<Gateway>
@@ -2081,6 +2090,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         position: "relative",
       }}
     >
+      {editingLimits && <GatewayLimitsModal key={editingLimits.id} gateway={editingLimits} onClose={() => setEditingLimits(null)} onSaved={loadGateways} />}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {/* 左侧会话栏（DeepSeek 风格；可折叠） */}
         {!isMobile && railOpen && renderRail()}

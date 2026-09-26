@@ -1,6 +1,6 @@
 import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020";
-import { aiReady, completionsUrl, generationOptions, type AiConfig, type ChatMessage } from "@/core/llm";
+import { aiReady, completionsUrl, generationOptions, assertInputBudget, type AiConfig, type ChatMessage } from "@/core/llm";
 import { getCapability } from "./capabilities";
 import { connectMcp, listMcpTools } from "./mcp";
 import { getSkillDetail, runSkill } from "@/core/skills";
@@ -98,6 +98,7 @@ export async function chatWithTools(opts: {
   const callIds = new Set<string>();
   for (let round = 0; round < 7; round++) {
     opts.signal.throwIfAborted();
+    assertInputBudget(opts.cfg, { messages, tools: opts.tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters })) });
     const response = await fetch(completionsUrl(opts.cfg.base_url), {
       method: "POST", signal: opts.signal,
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.cfg.api_key}` },

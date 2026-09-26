@@ -5,7 +5,7 @@ import ts from 'typescript';
 const source = readFileSync(new URL('../../core/llm.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const cfg = { enabled: true, base_url: 'https://example.invalid/v1', api_key: 'test', model: 'test' };
-async function run(response, timeout = false, model = "test", streaming = true) {
+async function run(response, timeout = false, model = "test", streaming = true, cfgOverrides = {}) {
   let calls = 0; const deltas = []; let request;
   const context = {
     exports: {}, require: () => ({}), AbortController, TextDecoder,
@@ -14,8 +14,8 @@ async function run(response, timeout = false, model = "test", streaming = true) 
     fetch: async (_, opts) => { calls++; request = JSON.parse(opts.body); if (timeout) { await Promise.resolve(); opts.signal.throwIfAborted(); } return response; },
   };
   vm.createContext(context); vm.runInContext(js, context);
-  const result = await context.exports[streaming ? "chatLlmStream" : "chatLlm"]({ cfg: { ...cfg, model }, maxTokens: 4000, messages: [{ role: 'user', content: 'hello' }], onDelta: (s) => deltas.push(s) });
-  return { result, calls, deltas, request };
+  const result = await context.exports[streaming ? "chatLlmStream" : "chatLlm"]({ cfg: { ...cfg, model, ...cfgOverrides }, maxTokens: 4000, messages: [{ role: 'user', content: 'hello' }], onDelta: (s) => deltas.push(s) });
+  return { result, calls, deltas, request, api: context.exports };
 }
 {
   const { result, calls, deltas } = await run(Response.json({ choices: [{ message: { content: 'JSON answer' } }] }));
@@ -56,3 +56,13 @@ for (const streaming of [true, false]) {
   assert.equal(result.content,'正式回答');assert.deepEqual(deltas,['正式回答']);
 }
 console.log('PASS: MiniMax streaming/JSON reasoning separation and output budget, generic gateway compatibility');
+
+for (const streaming of [true,false]) {
+  const {request,api}=await run(Response.json({choices:[{message:{content:'answer'}}]}),false,'MiniMax-M3',streaming,{max_output_tokens:32000,timeout_seconds:150});
+  assert.equal(request.max_tokens,32000);assert.equal(api.generationTimeout({timeout_seconds:150},90_000),150_000);
+  const limited=await run(Response.json({}),false,'MiniMax-M3',streaming,{max_input_tokens:1});
+  assert.equal(limited.result.ok,false);assert.equal(limited.calls,0);assert.match(limited.result.error,/输入上下文/);
+  for(const value of [-1,1.5,'100',null,262145]) assert.throws(()=>api.parseGatewayLimits({max_output_tokens:value}));
+  assert.equal(api.parseGatewayLimits({max_output_tokens:0}).max_output_tokens,0);
+}
+console.log('PASS: explicit output/timeout settings, input guard before network, invalid limits rejected');

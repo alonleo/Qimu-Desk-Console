@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { assertOrigin, jsonError, requireUser, requireAdmin, readJson } from "@/core/api";
-import { getAiConfig, saveAiConfig, maskApiKey } from "@/core/llm";
+import { getAiConfig, saveAiConfig, maskApiKey, parseGatewayLimits } from "@/core/llm";
 
 export async function GET(req: Request) {
   if (!assertOrigin(req)) return jsonError("跨域请求被拒绝", 403);
@@ -22,12 +22,16 @@ export async function PUT(req: Request) {
   const body = (await readJson(req)) as Record<string, unknown> | null;
   if (!body) return jsonError("请求体缺失", 400);
 
+  let limits;
+  try { limits = parseGatewayLimits(body); } catch (e) { return jsonError((e as Error).message, 400); }
+
   // apiKey 若为打码形式（**** 开头）则视为未修改，保留旧值
   const cur = await getAiConfig();
   let apiKey = typeof body.api_key === "string" ? body.api_key.trim() : cur.api_key;
   if (apiKey.startsWith("****")) apiKey = cur.api_key;
 
   const cfg = await saveAiConfig({
+    ...limits,
     provider: typeof body.provider === "string" ? body.provider : undefined,
     base_url: typeof body.base_url === "string" ? body.base_url : undefined,
     api_key: apiKey,

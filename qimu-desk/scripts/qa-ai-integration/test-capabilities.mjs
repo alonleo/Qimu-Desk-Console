@@ -47,7 +47,7 @@ const llm = load("core/llm.ts", { "./db": {} });
 let finishReasons = [];
 let executed = 0; let requests = []; let answers = []; let toolProgress = [];
 const runtime = load('core/ai/tool-chat.ts', {
-  '@/core/llm': { aiReady: () => true, completionsUrl: () => 'https://example.invalid/chat/completions', generationOptions: llm.generationOptions },
+  '@/core/llm': { aiReady: () => true, completionsUrl: () => 'https://example.invalid/chat/completions', generationOptions: llm.generationOptions, assertInputBudget: llm.assertInputBudget },
   './capabilities': { getCapability: async (userId, id) => userId === 7 && id === 1 ? { enabled: true, config: skill.config } : null },
   './mcp': { connectMcp: () => { throw new Error('must not connect'); } },
   '@/core/skills': { getSkillDetail: async () => null },

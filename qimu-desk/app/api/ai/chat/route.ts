@@ -9,6 +9,7 @@ import {
   chatLlmStream,
   getAiConfigById,
   getAiConfig,
+  generationTimeout,
   type ChatMessage,
   type AiConfig,
 } from "@/core/llm";
@@ -466,7 +467,7 @@ async function handleCapabilityChat(opts: {
   capabilityIds: number[]; skillIds: number[]; allowToolCalls: boolean;
 }): Promise<Response> {
   const lifecycle = new AbortController();
-  const signal = AbortSignal.any([opts.req.signal, lifecycle.signal, AbortSignal.timeout(180000)]);
+  const signal = AbortSignal.any([opts.req.signal, lifecycle.signal, AbortSignal.timeout(generationTimeout(opts.cfg, 180000))]);
   const execute = async (onTool: (run: ToolRun) => void) => {
     const prepared = await prepareCapabilities({ user: opts.user, ids: opts.capabilityIds,
       skillIds: opts.skillIds, allowTools: opts.allowToolCalls, signal });

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { exec, row, rows, withTransaction } from "@/core/db";
 import { assertOrigin, jsonError, requireAdmin, requireUser, readJson } from "@/core/api";
-import { maskApiKey } from "@/core/llm";
+import { maskApiKey, parseGatewayLimits } from "@/core/llm";
 
 /**
  * AI 网关表 ai_config 字段（与后端 schema 对齐）：
- *   id, name, provider, base_url, api_key, model, temperature, enabled, is_default
+ *   id, name, provider, base_url, api_key, model, temperature, max_input_tokens, max_output_tokens, timeout_seconds, enabled, is_default
  * 至少保留一条网关（删除最后一条时被阻止）。
  */
 type GatewayRow = {
@@ -16,6 +16,9 @@ type GatewayRow = {
   api_key: string;
   model: string;
   temperature: number;
+  max_input_tokens: number;
+  max_output_tokens: number;
+  timeout_seconds: number;
   enabled: number;
   is_default: number;
   updated_at: string | null;
@@ -30,6 +33,9 @@ function rowToDto(r: GatewayRow) {
     api_key: maskApiKey(r.api_key),
     model: r.model,
     temperature: Number(r.temperature),
+    max_input_tokens: r.max_input_tokens || 0,
+    max_output_tokens: r.max_output_tokens || 0,
+    timeout_seconds: r.timeout_seconds || 0,
     enabled: !!r.enabled,
     is_default: !!r.is_default,
     updated_at: r.updated_at,
@@ -44,7 +50,7 @@ export async function GET(req: Request) {
 
   try {
     const list = await rows<GatewayRow>(
-      "SELECT id, name, provider, base_url, api_key, model, temperature, enabled, is_default, updated_at FROM ai_config ORDER BY is_default DESC, id"
+      "SELECT id, name, provider, base_url, api_key, model, temperature, max_input_tokens, max_output_tokens, timeout_seconds, enabled, is_default, updated_at FROM ai_config ORDER BY is_default DESC, id"
     );
     const defaultRow = list.find((r) => r.is_default) || list[0] || null;
     return NextResponse.json({
@@ -65,6 +71,8 @@ export async function POST(req: Request) {
 
   const body = (await readJson(req)) as Record<string, unknown> | null;
   if (!body) return jsonError("请求体缺失", 400);
+  let limits;
+  try { limits = parseGatewayLimits(body); } catch (e) { return jsonError((e as Error).message, 400); }
 
   const name = String(body.name ?? "").trim();
   const baseUrl = String(body.base_url ?? "").trim();
@@ -88,14 +96,14 @@ export async function POST(req: Request) {
       const any = await row<{ c: number }>("SELECT COUNT(*) AS c FROM ai_config");
       const isDefault = (any?.c ?? 0) === 0 ? 1 : 0;
       const info = await txExec(
-        `INSERT INTO ai_config (name, provider, base_url, api_key, model, temperature, enabled, is_default)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [name, provider, baseUrl, apiKey, model, temperature, enabled ? 1 : 0, isDefault]
+        `INSERT INTO ai_config (name, provider, base_url, api_key, model, temperature, max_input_tokens, max_output_tokens, timeout_seconds, enabled, is_default)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [name, provider, baseUrl, apiKey, model, temperature, limits.max_input_tokens || 0, limits.max_output_tokens || 0, limits.timeout_seconds || 0, enabled ? 1 : 0, isDefault]
       );
       return { id: info.insertId, isDefault };
     });
     const created = await row<GatewayRow>(
-      "SELECT id, name, provider, base_url, api_key, model, temperature, enabled, is_default, updated_at FROM ai_config WHERE id = ?",
+      "SELECT id, name, provider, base_url, api_key, model, temperature, max_input_tokens, max_output_tokens, timeout_seconds, enabled, is_default, updated_at FROM ai_config WHERE id = ?",
       [result.id]
     );
     return NextResponse.json({ ok: true, gateway: created ? rowToDto(created) : null });

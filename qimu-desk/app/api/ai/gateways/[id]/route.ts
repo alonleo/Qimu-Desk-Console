@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { row, rows, withTransaction } from "@/core/db";
 import { assertOrigin, jsonError, requireAdmin, readJson } from "@/core/api";
-import { maskApiKey } from "@/core/llm";
+import { maskApiKey, parseGatewayLimits } from "@/core/llm";
 
 type GatewayRow = {
   id: number;
@@ -11,6 +11,9 @@ type GatewayRow = {
   api_key: string;
   model: string;
   temperature: number;
+  max_input_tokens: number;
+  max_output_tokens: number;
+  timeout_seconds: number;
   enabled: number;
   is_default: number;
   updated_at: string | null;
@@ -25,6 +28,9 @@ function rowToDto(r: GatewayRow) {
     api_key: maskApiKey(r.api_key),
     model: r.model,
     temperature: Number(r.temperature),
+    max_input_tokens: r.max_input_tokens || 0,
+    max_output_tokens: r.max_output_tokens || 0,
+    timeout_seconds: r.timeout_seconds || 0,
     enabled: !!r.enabled,
     is_default: !!r.is_default,
     updated_at: r.updated_at,
@@ -33,7 +39,7 @@ function rowToDto(r: GatewayRow) {
 
 async function loadOne(id: number): Promise<GatewayRow | null> {
   return row<GatewayRow>(
-    "SELECT id, name, provider, base_url, api_key, model, temperature, enabled, is_default, updated_at FROM ai_config WHERE id = ?",
+    "SELECT id, name, provider, base_url, api_key, model, temperature, max_input_tokens, max_output_tokens, timeout_seconds, enabled, is_default, updated_at FROM ai_config WHERE id = ?",
     [id]
   );
 }
@@ -50,6 +56,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
   const body = (await readJson(req)) as Record<string, unknown> | null;
   if (!body) return jsonError("请求体缺失", 400);
+  let limits;
+  try { limits = parseGatewayLimits(body); } catch (e) { return jsonError((e as Error).message, 400); }
 
   const cur = await loadOne(id);
   if (!cur) return jsonError("网关不存在", 404);
@@ -60,6 +68,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     return (body[k] as string).trim();
   };
   const next = {
+    max_input_tokens: limits.max_input_tokens ?? cur.max_input_tokens ?? 0,
+    max_output_tokens: limits.max_output_tokens ?? cur.max_output_tokens ?? 0,
+    timeout_seconds: limits.timeout_seconds ?? cur.timeout_seconds ?? 0,
     name: pickStr("name") ?? cur.name,
     provider: pickStr("provider") ?? cur.provider,
     base_url: pickStr("base_url") ?? cur.base_url,
@@ -102,7 +113,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       await txExec(
         `UPDATE ai_config SET
            name = ?, provider = ?, base_url = ?, api_key = ?, model = ?,
-           temperature = ?, enabled = ?, is_default = ?, updated_at = NOW()
+           temperature = ?, max_input_tokens = ?, max_output_tokens = ?, timeout_seconds = ?, enabled = ?, is_default = ?, updated_at = NOW()
          WHERE id = ?`,
         [
           next.name,
@@ -111,6 +122,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           next.api_key,
           next.model,
           next.temperature,
+          next.max_input_tokens, next.max_output_tokens, next.timeout_seconds,
           next.enabled ? 1 : 0,
           next.is_default ? 1 : 0,
           id,

@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+function load(path,mocks={}) { const c={exports:{},require:id=>mocks[id]||{}};vm.createContext(c);vm.runInContext(ts.transpileModule(readFileSync(new URL('../../'+path,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,c);return c.exports; }
+const llm=load('core/llm.ts');let admin=true,writes=[];
+const current={id:7,name:'Test',provider:'openai-compatible',base_url:'https://example.invalid',api_key:'private',model:'MiniMax-M3',temperature:0.7,enabled:1,is_default:0,max_input_tokens:50000,max_output_tokens:16384,timeout_seconds:240};
+const db={row:async sql=>sql.includes('COUNT')?{c:1}:{...current},rows:async()=>[{...current}],withTransaction:async fn=>fn({exec:async(sql,args)=>{assert.equal((sql.match(/\?/g)||[]).length,args.length);writes.push({sql,args});return {insertId:7};}})};
+const mocks={'@/core/llm':llm,'@/core/db':db,'next/server':{NextResponse:{json:(body,options={})=>({body,status:options.status||200})}},'@/core/api':{assertOrigin:()=>true,requireUser:async()=>({id:1}),requireAdmin:async()=>admin?{id:1}:null,readJson:async req=>req.body,jsonError:(error,status)=>({body:{ok:false,error},status})}};
+const patch=load('app/api/ai/gateways/[id]/route.ts',mocks).PATCH;
+const ctx={params:Promise.resolve({id:'7'})};
+await patch({body:{max_output_tokens:8192}},ctx);let args=writes.at(-1).args;
+assert.deepEqual(Array.from(args.slice(6,9)),[50000,8192,240]);assert.equal(args[3],'private');
+await patch({body:{max_input_tokens:0,timeout_seconds:0}},ctx);args=writes.at(-1).args;assert.deepEqual(Array.from(args.slice(6,9)),[0,16384,0]);
+let count=writes.length;assert.equal((await patch({body:{max_output_tokens:-1}},ctx)).status,400);assert.equal(writes.length,count);
+admin=false;assert.equal((await patch({body:{max_output_tokens:1}},ctx)).status,403);assert.equal(writes.length,count);admin=true;
+const api=load('app/api/ai/gateways/route.ts',mocks);
+await api.POST({body:{name:'Test',base_url:'https://example.invalid',api_key:'test',model:'MiniMax-M3',max_input_tokens:90000,max_output_tokens:32000,timeout_seconds:180}});
+assert.deepEqual(Array.from(writes.at(-1).args.slice(6,9)),[90000,32000,180]);
+const listing=await api.GET({});assert.equal(listing.body.gateways[0].max_output_tokens,16384);assert.notEqual(listing.body.gateways[0].api_key,'private');
+console.log('PASS: gateway create/update/read limits, partial update preserves settings/key, zero reset, admin guard, SQL binding counts');
