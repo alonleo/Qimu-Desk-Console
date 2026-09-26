@@ -2171,10 +2171,11 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       <CapabilitiesDrawer open={capabilitiesOpen} onClose={() => setCapabilitiesOpen(false)} capabilities={capabilities}
         loading={capabilitiesLoading} error={capabilitiesError} reload={loadCapabilities} />
       <Drawer
-        title="AI 网关设置（只读）"
+        title={isAdmin ? "AI 网关设置" : "AI 网关设置（只读）"}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        width={760}
+        size={980}
+        styles={{ wrapper: { maxWidth: "100vw" } }}
         destroyOnClose={false}
       >
         {renderSettings}
