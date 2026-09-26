@@ -33,13 +33,14 @@ export const chatMessageSchema = z.object({
 export const aiChatSchema = z.object({
   messages: z.array(chatMessageSchema).min(1, "messages 不能为空").max(60, "消息数量超出限制"),
   useKnowledge: z.boolean().optional(),
-  autoSave: z.boolean().optional(),
   category: z.string().optional(),
   tag: z.string().optional(),
   gatewayId: z.number().int().positive().optional(),
   stream: z.boolean().optional(),
   skillIds: z.array(z.number().int().positive()).optional(),
   workflowIds: z.array(z.number().int().positive()).optional(),
+  capabilityIds: z.array(z.number().int().positive()).max(10).default([]),
+  allowToolCalls: z.boolean().default(false),
 });
 
 /** 任务合法枚举 */

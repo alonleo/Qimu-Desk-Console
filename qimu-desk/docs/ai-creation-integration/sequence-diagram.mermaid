@@ -10,7 +10,7 @@ sequenceDiagram
     participant T as 技能/工作流/知识库
 
     U->>V: 输入"创建 fetch-stats 技能"
-    V->>C: POST {messages, useKnowledge, autoSave:false, gatewayId}
+    V->>C: POST {messages, useKnowledge, gatewayId}
     C->>P: 拼接 ARTIFACT_SYSTEM_PROMPT
     C->>X: chatLlm 返回正文(可能含 <artifacts>)
     X-->>C: { reply, drafts[], skipped }

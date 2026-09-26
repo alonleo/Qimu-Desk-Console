@@ -29,6 +29,10 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { TextAreaRef } from "antd/es/input/TextArea";
+import composerStyles from "./AIComposer.module.css";
+import CapabilitiesDrawer from "@/components/ai/CapabilitiesDrawer";
+import ToolActivity from "@/components/ai/ToolActivity";
+import type { CapabilitySummary, ToolRun } from "@/core/ai/capability-schema";
 import ChatMarkdown from "@/components/ai/ChatMarkdown";
 import DraftCard, { type DraftCardHandle } from "@/components/ai/DraftCard";
 import type { ChatDraft, SaveResult } from "@/core/ai/artifacts";
@@ -54,6 +58,8 @@ import {
   CopyOutlined,
   DatabaseOutlined,
   DeleteOutlined,
+  EditOutlined,
+  DownloadOutlined,
   DislikeFilled,
   DislikeOutlined,
   LikeFilled,
@@ -78,6 +84,9 @@ type ChatItem = {
   role: "user" | "assistant";
   content: string;
   usedDocs?: { id: number; title: string }[];
+  usedCapabilities?: { id: number; name: string }[];
+  allowToolCalls?: boolean;
+  toolRuns?: ToolRun[];
   gatewayId?: number;
   gatewayName?: string;
   model?: string;
@@ -137,7 +146,6 @@ type Gateway = {
 const LS_GATEWAY_KEY = "alon:chat:gatewayId";
 const LS_RAIL_KEY = "alon:chat:railOpen";
 const LS_USE_KNOWLEDGE_KEY = "alon:chat:useKnowledge";
-const LS_AUTO_SAVE_KEY = "alon:chat:autoSave";
 // 会话数据按登录用户隔离：key 携带用户 id，避免不同账号在同一浏览器下共享记录
 const sessionKeyOf = (userId: number) => `alon:chat:sessions:u${userId}`;
 const activeKeyOf = (userId: number) => `alon:chat:activeId:u${userId}`;
@@ -219,6 +227,16 @@ function isValidChatItem(item: unknown): item is ChatItem {
       if (doc.title !== undefined && typeof doc.title !== "string") return false;
     }
   }
+  if (c.usedCapabilities !== undefined && (!Array.isArray(c.usedCapabilities) || !c.usedCapabilities.every((r) => r && typeof r.id === "number" && typeof r.name === "string"))) return false;
+  if (c.toolRuns !== undefined && (!Array.isArray(c.toolRuns) || !c.toolRuns.every((r) => r && typeof r.id === "string" && typeof r.name === "string" && ["running", "success", "error"].includes(r.status) && (r.output === undefined || typeof r.output === "string")))) return false;
+  for (const key of ["usedSkills", "usedWorkflows"] as const) {
+    const refs = c[key];
+    if (refs !== undefined && (!Array.isArray(refs) || !refs.every((ref: unknown) => {
+      if (!ref || typeof ref !== "object") return false;
+      const r = ref as Record<string, unknown>;
+      return typeof r.id === "number" && typeof r.name === "string" && typeof r.displayName === "string";
+    }))) return false;
+  }
   if (c.drafts !== undefined) {
     if (!Array.isArray(c.drafts) || !(c.drafts as unknown[]).every(isValidDraft)) return false;
   }
@@ -234,6 +252,7 @@ function isValidConv(item: unknown): item is Conv {
   const c = item as Record<string, unknown>;
   if (typeof c.id !== "string") return false;
   if (typeof c.title !== "string") return false;
+  if (typeof c.updatedAt !== "number" || !Number.isFinite(c.updatedAt)) return false;
   if (!Array.isArray(c.items) || !c.items.every(isValidChatItem)) return false;
   return true;
 }
@@ -243,7 +262,7 @@ function loadSessions(storageKey: string): Conv[] | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    return parsed.filter(isValidConv).slice(-MAX_CONVS) as Conv[];
+    return parsed.filter(isValidConv).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CONVS) as Conv[];
   } catch {
     return null;
   }
@@ -290,7 +309,7 @@ function stripTrailingSlashToken(value: string): string {
 /** 流式展示时过滤 <artifacts>…</artifacts> 区段（done 事件回传的 reply 已是剥离版） */
 function stripArtifactRegion(text: string): string {
   if (!text.includes("<artifacts")) return text;
-  return text.replace(/<artifacts[\s\S]*?<\/artifacts>/g, "").trim();
+  return text.replace(/<artifacts[\s\S]*?<\/artifacts>/g, "").replace(/<artifacts[\s\S]*$/, "").trim();
 }
 
 /** 过滤推理模型的 <think>…</think> 思考区段（含流式中尚未闭合的尾部 <think>…） */
@@ -344,11 +363,33 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   const [gateways, setGateways] = useState<Gateway[] | null>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
+  const [capabilities, setCapabilities] = useState<CapabilitySummary[]>([]);
+  const [capabilityIds, setCapabilityIds] = useState<number[]>([]);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+  const [capabilitiesError, setCapabilitiesError] = useState("");
+  const [allowToolCalls, setAllowToolCalls] = useState(false);
+  const [liveToolRuns, setLiveToolRuns] = useState<ToolRun[]>([]);
+  const loadCapabilities = useCallback(async () => {
+    setCapabilitiesLoading(true); setCapabilitiesError("");
+    try {
+      const response = await fetch("/api/ai/capabilities", { credentials: "include" });
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.capabilities)) throw new Error(data.error || "加载 AI 能力失败");
+      const list: CapabilitySummary[] = data.capabilities;
+      setCapabilities(list);
+      setCapabilityIds((ids) => ids.filter((id) => list.some((c) => c.id === id && c.enabled)));
+    } catch (error) {
+      setCapabilitiesError(error instanceof Error ? error.message : "加载 AI 能力失败");
+    } finally { setCapabilitiesLoading(false); }
+  }, []);
+  useEffect(() => { void loadCapabilities(); }, [loadCapabilities]);
   const [pickedId, setPickedId] = useState<number | null>(null);
 
   // —— 多会话 ——
   const [conversations, setConversations] = useState<Conv[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [railOpen, setRailOpen] = useState(true);
   const [hydrated, setHydrated] = useState(false);
   // 当前登录用户 id（会话记录按用户隔离的前提）
@@ -363,10 +404,10 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   const [slashGroups, setSlashGroups] = useState<SlashGroup[]>([]);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
-  const [autoSave, setAutoSave] = useState(false);
+  const [mobileRailOpen, setMobileRailOpen] = useState(false);
   const [streaming, setStreaming] = useState<{ convId: string; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const jsonFallbackRef = useRef(false); // 流式失败 → 非流式降级（每轮仅一次）
+  const finishStreamRef = useRef<(() => void) | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<TextAreaRef>(null);
@@ -422,19 +463,19 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
 
   useEffect(() => {
     if (!gateways) return;
-    if (pickedId && gateways.some((g) => g.id === pickedId)) return;
-    const stored = typeof window !== "undefined" ? Number(localStorage.getItem(LS_GATEWAY_KEY)) : NaN;
-    if (Number.isInteger(stored) && gateways.some((g) => g.id === stored)) {
+    if (pickedId && gateways.some((g) => g.id === pickedId && g.enabled)) return;
+    const stored = typeof window !== "undefined" ? Number(readLocalStorage(LS_GATEWAY_KEY)) : NaN;
+    if (Number.isInteger(stored) && gateways.some((g) => g.id === stored && g.enabled)) {
       setPickedId(stored);
       return;
     }
-    const def = gateways.find((g) => g.is_default) || gateways.find((g) => g.enabled) || gateways[0];
+    const def = gateways.find((g) => g.is_default && g.enabled) || gateways.find((g) => g.enabled);
     setPickedId(def ? def.id : null);
   }, [gateways, pickedId]);
 
   useEffect(() => {
     if (pickedId && typeof window !== "undefined") {
-      localStorage.setItem(LS_GATEWAY_KEY, String(pickedId));
+      writeLocalStorage(LS_GATEWAY_KEY, String(pickedId));
     }
   }, [pickedId]);
 
@@ -515,7 +556,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       if (legacySessions && legacySessions.length > 0) {
         sessions = legacySessions;
         storedActive = readLocalStorage(LS_LEGACY_ACTIVE_KEY);
-        writeLocalStorage(sk, JSON.stringify(legacySessions.slice(-MAX_CONVS)));
+        writeLocalStorage(sk, JSON.stringify(legacySessions.slice(0, MAX_CONVS)));
         if (storedActive) writeLocalStorage(ak, storedActive);
         removeLocalStorage(LS_LEGACY_SESSIONS_KEY);
         removeLocalStorage(LS_LEGACY_ACTIVE_KEY);
@@ -543,7 +584,6 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       }
     }
     setUseKnowledge(readLocalStorage(LS_USE_KNOWLEDGE_KEY) === "true");
-    setAutoSave(readLocalStorage(LS_AUTO_SAVE_KEY) === "true");
     setRailOpen(readLocalStorage(LS_RAIL_KEY) !== "false");
     setHydrated(true);
   }, [userKey]);
@@ -552,7 +592,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   useEffect(() => {
     if (!hydrated || userKey == null) return;
     if (conversations.length > 0) {
-      writeLocalStorage(sessionKeyOf(userKey), JSON.stringify(conversations.slice(-MAX_CONVS)));
+      writeLocalStorage(sessionKeyOf(userKey), JSON.stringify([...conversations].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CONVS)));
     } else {
       removeLocalStorage(sessionKeyOf(userKey));
     }
@@ -570,10 +610,6 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     if (!hydrated) return;
     writeLocalStorage(LS_USE_KNOWLEDGE_KEY, String(useKnowledge));
   }, [useKnowledge, hydrated]);
-  useEffect(() => {
-    if (!hydrated) return;
-    writeLocalStorage(LS_AUTO_SAVE_KEY, String(autoSave));
-  }, [autoSave, hydrated]);
 
   const picked = useMemo(
     () => gateways?.find((g) => g.id === pickedId) || null,
@@ -586,8 +622,14 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   );
   const activeConvItems = activeConv?.items ?? [];
   const sortedConvs = useMemo(
-    () => [...conversations].sort((a, b) => b.updatedAt - a.updatedAt),
-    [conversations]
+    () => {
+      const query = search.trim().toLocaleLowerCase();
+      return conversations
+        .filter((c) => !query || [c.title, ...c.items.map((m) => m.content)]
+          .some((text) => text.toLocaleLowerCase().includes(query)))
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+    },
+    [conversations, search]
   );
 
   // 空状态 = 当前会话还没有任何用户消息（新对话 / 清空后）
@@ -624,10 +666,15 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
 
   const abortCurrentStream = useCallback(() => {
     abortRef.current?.abort();
+    finishStreamRef.current?.();
+  }, []);
+
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    finishStreamRef.current?.();
   }, []);
 
   const deleteConv = (convId: string) => {
-    if (streaming?.convId === convId) abortCurrentStream();
     modal.confirm({
       title: "删除该对话？",
       content: "删除后该对话记录将被清除且无法恢复。",
@@ -635,6 +682,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       okButtonProps: { danger: true },
       cancelText: "取消",
       onOk() {
+        if (streaming?.convId === convId) abortCurrentStream();
         setConversations((prev) => prev.filter((c) => c.id !== convId));
         setActiveId((cur) => (cur === convId ? null : cur));
         appMessage.success("已删除对话");
@@ -643,7 +691,6 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   };
 
   const clearConv = (convId: string) => {
-    if (streaming?.convId === convId) abortCurrentStream();
     modal.confirm({
       title: "清空当前对话？",
       content: "对话内容将被清空且无法恢复，清空后回到初始欢迎语。",
@@ -651,6 +698,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       okButtonProps: { danger: true },
       cancelText: "取消",
       onOk() {
+        if (streaming?.convId === convId) abortCurrentStream();
         commitItems(convId, [], { title: "" });
         appMessage.success("已清空对话");
       },
@@ -661,12 +709,15 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     if (convId === activeId) return;
     abortCurrentStream(); // 切会话前中止当前流（已产出内容会留在原会话）
     setActiveId(convId);
+    setMobileRailOpen(false);
   };
 
   const newConv = () => {
     abortCurrentStream();
+    setSearch("");
+    setMobileRailOpen(false);
     setActiveId(null);
-    jsonFallbackRef.current = false;
+
   };
 
   const toggleFeedback = (convId: string, itemIdx: number, fb: "up" | "down") => {
@@ -684,16 +735,18 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
 
   // ============ 发送 / 流式 ============
   const runChat = useCallback(
-    async (convId: string, items: ChatItem[], refs?: { skillIds?: number[]; workflowIds?: number[] }) => {
+    async (convId: string, items: ChatItem[], refs?: { skillIds?: number[]; workflowIds?: number[]; capabilityIds?: number[]; allowToolCalls?: boolean }) => {
       const gw = picked;
       if (!gw) return;
       abortCurrentStream();
       const controller = new AbortController();
       abortRef.current = controller;
       setStreaming({ convId, text: "" });
+      setLiveToolRuns([]);
+      const toolRuns: ToolRun[] = [];
 
+      let finished = false;
       let raw = "";
-      let deltaCount = 0;
       let finalReply: string | null = null;
       let receivedDone = false;
       // 打字机渲染队列：delta 进入 raw 缓冲，rAF 循环匀速吐字
@@ -705,6 +758,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       const finishRef: { fn: ((err?: string | null, aborted?: boolean) => void) | null } = { fn: null };
       const tick = () => {
         rafId = null;
+        if (finished || abortRef.current !== controller) return;
         if (shown < raw.length) {
           const backlog = raw.length - shown;
           const step = Math.max(2, Math.ceil(backlog / 12));
@@ -747,7 +801,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       } = {};
       // 发送给后端的精简消息：仅保留 role/content 与引用元数据（其余 ChatItem
       // 字段如 drafts/saveResults 属于 UI 展示，不随请求发送）
-      const messages = items.slice(-SEND_TRIM).map((m) => ({
+      const messages = items.filter((m) => !m.error).slice(-SEND_TRIM).map((m) => ({
         role: m.role,
         content: m.content,
         usedSkills: m.usedSkills?.map((s) => ({
@@ -766,15 +820,17 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
 
       // 统一收尾：追加最终 assistant 消息
       const finish = (err?: string | null, aborted?: boolean) => {
+        if (finished) return;
+        finished = true;
         stopLoop();
         finishRef.fn = null;
+        if (abortRef.current !== controller) return;
+        finishStreamRef.current = null;
         const rawContent = finalReply ?? (raw.trim() ? raw.trim() : null);
-        if (rawContent) {
-          // 推理模型（MiniMax-M3 等）正文常包裹在 <think>…</think> 中：
-          // 入库前剥离思考段，避免大段 thinking 挤占 localStorage 截断窗口（丢历史回答）、
-          // 以及渲染出"空气泡"；剥离后为空（整条都是思考）时保留原文，由渲染层兜底提示
-          const cleaned = stripThink(stripArtifactRegion(rawContent));
-          const content = cleaned || rawContent;
+        if (rawContent || meta.drafts?.length || toolRuns.length) {
+          // 仅保存可展示正文；草稿独立保留，避免仅含产物时丢失操作卡片。
+          const cleaned = stripThink(stripArtifactRegion(rawContent || ""));
+          const content = cleaned || (meta.drafts?.length ? "已生成草稿，请查看下方内容。" : aborted ? "已停止生成。已完成的工具操作不会撤销。" : err || "生成已结束，未返回可显示的回答。");
           const item: ChatItem = {
             role: "assistant",
             content,
@@ -784,62 +840,21 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             gatewayName: meta.gatewayName,
             model: meta.model,
             gatewayId: meta.gatewayId,
+            toolRuns: toolRuns.map((run) => run.status === "running" ? { ...run, status: "error", output: "等待已停止；工具可能已执行，请核对结果后再重试。" } : run),
           };
           commitItems(convId, [...items, item]);
-        } else if (err && !aborted) {
-          commitItems(convId, [...items, { role: "assistant", content: `⚠️ ${err}`, error: true }]);
+        } else if (!aborted) {
+          commitItems(convId, [...items, { role: "assistant", content: `⚠️ ${err || "AI 未返回内容，请重试"}`, error: true }]);
+        }
+        if (err && rawContent && !aborted) {
+          appMessage.warning(err);
         }
         // aborted 且无内容：用户主动停止，不追加任何消息
         setStreaming(null);
         abortRef.current = null;
       };
       finishRef.fn = finish;
-
-      // 降级：网关不支持流式时走原 JSON 接口（仅一次）
-      const fallbackJson = async (): Promise<boolean> => {
-        try {
-          const r = await fetch("/api/ai/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-              messages,
-              useKnowledge,
-              autoSave,
-              gatewayId: gw.id,
-              stream: false,
-              skillIds: refs?.skillIds,
-              workflowIds: refs?.workflowIds,
-            }),
-          });
-          const d = await r.json();
-          if (d.ok) {
-            const usedGw =
-              typeof d.gatewayId === "number"
-                ? gateways?.find((g) => g.id === d.gatewayId)
-                : undefined;
-            const item: ChatItem = {
-              role: "assistant",
-              content: d.reply,
-              usedDocs: d.usedDocs,
-              drafts: d.drafts,
-              saveResults: d.saveResults,
-              gatewayName: usedGw?.name,
-              model: usedGw?.model,
-              gatewayId: d.gatewayId,
-            };
-            commitItems(convId, [...items, item]);
-            setStreaming(null);
-            abortRef.current = null;
-            return true;
-          }
-          finish(`流式不可用，非流式请求失败：${d.error || "未知错误"}`, false);
-          return true;
-        } catch {
-          finish("网络错误，请稍后重试", false);
-          return true;
-        }
-      };
+      finishStreamRef.current = () => finish(null, true);
 
       try {
         const res = await fetch("/api/ai/chat", {
@@ -850,11 +865,12 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
           body: JSON.stringify({
             messages,
             useKnowledge,
-            autoSave,
             gatewayId: gw.id,
             stream: true,
             skillIds: refs?.skillIds,
             workflowIds: refs?.workflowIds,
+            capabilityIds: refs?.capabilityIds,
+            allowToolCalls: refs?.allowToolCalls,
           }),
         });
         if (!res.ok) {
@@ -868,8 +884,8 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         let buf = "";
         for (;;) {
           const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
+          if (finished) return;
+          buf += done ? decoder.decode() + "\n" : decoder.decode(value, { stream: true });
           let nl: number;
           while ((nl = buf.indexOf("\n")) >= 0) {
             const line = buf.slice(0, nl).trim();
@@ -885,7 +901,6 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             }
             if (ev.type === "delta") {
               const t = typeof ev.text === "string" ? ev.text : "";
-              deltaCount += 1;
               pushText(t);
             } else if (ev.type === "done") {
               receivedDone = true;
@@ -902,11 +917,20 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                 model: usedGw?.model,
                 gatewayId: typeof ev.gatewayId === "number" ? ev.gatewayId : undefined,
               };
+            } else if (ev.type === "tool") {
+              const run = ev.run as ToolRun | undefined;
+              if (run && typeof run.id === "string" && typeof run.name === "string") {
+                const index = toolRuns.findIndex((r) => r.id === run.id);
+                if (index < 0) toolRuns.push(run); else toolRuns[index] = run;
+                setLiveToolRuns([...toolRuns]);
+              }
             } else if (ev.type === "error") {
               throw new Error(typeof ev.error === "string" ? ev.error : "流式响应错误");
             }
           }
+          if (done) break;
         }
+        if (!receivedDone) throw new Error("连接已中断，回答可能不完整，请重试");
         // 读流结束：不立即收尾，等吐字循环追平缓冲区后再 finish，避免结尾大段跳出
         receivedDone = true;
         ensureLoop();
@@ -915,27 +939,26 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         const msg = (err as Error)?.message || String(err);
         if (aborted) {
           finish(null, true); // 用户停止 / 切会话：保留已产出内容
-        } else if (deltaCount === 0 && !jsonFallbackRef.current) {
-          jsonFallbackRef.current = true;
-          await fallbackJson(); // 网关不支持流式 → 降级 JSON（原逻辑兜底）
         } else {
           finish(msg || "网络错误，请稍后重试", false);
         }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [picked, useKnowledge, autoSave, gateways, commitItems, abortCurrentStream]
+    [picked, useKnowledge, gateways, commitItems, abortCurrentStream, appMessage]
   );
 
   const send = useCallback(async (extra?: SendExtra) => {
     const text = (extra?.text ?? inputRef.current).trim();
-    if (!text || streaming) return;
+    if (!text || streaming || abortRef.current) return;
+    if (!hydrated) { appMessage.warning("正在加载用户信息，请稍后再试或刷新页面"); return; }
     if (!picked) {
       appMessage.warning("暂无可用 AI 网关，请联系管理员在「管理后台 → AI 网关」中新增并启用");
       return;
     }
     if (!picked.enabled) {
-      appMessage.warning(`当前选择的网关「${picked.name}」未启用，已自动切到默认网关`);
+      appMessage.warning("请选择已启用的 AI 网关");
+      return;
     }
     const convId = activeId ?? createId();
     // 构建用户消息，包含引用信息
@@ -946,6 +969,8 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       content: text,
       usedSkills: usedSkills.length > 0 ? usedSkills : undefined,
       usedWorkflows: usedWorkflows.length > 0 ? usedWorkflows : undefined,
+      usedCapabilities: capabilities.filter((c) => capabilityIds.includes(c.id)).map((c) => ({ id: c.id, name: c.name })),
+      allowToolCalls,
     };
     const items = [...activeConvItems, userItem];
 
@@ -972,7 +997,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             updatedAt: Date.now(),
             items,
           },
-          ...prev,
+          ...[...prev].sort((a, b) => b.updatedAt - a.updatedAt),
         ].slice(0, MAX_CONVS)
       );
     }
@@ -981,14 +1006,16 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     // 清空引用
     setSelectedSkills([]);
     setSelectedWorkflows([]);
-    jsonFallbackRef.current = false;
+
     // 传递 skillIds 和 workflowIds 给 runChat
     await runChat(convId, items, {
       skillIds: extra?.skillIds ?? selectedSkills.map((s) => s.id),
       workflowIds: extra?.workflowIds ?? selectedWorkflows.map((w) => w.id),
+      capabilityIds,
+      allowToolCalls,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streaming, picked, activeId, activeConv, activeConvItems, appMessage, runChat, selectedSkills, selectedWorkflows]);
+  }, [hydrated, streaming, picked, activeId, activeConv, activeConvItems, appMessage, runChat, selectedSkills, selectedWorkflows, capabilities, capabilityIds, allowToolCalls]);
 
   // ============ 「/」内联命令面板：交互逻辑 ============
   const closeSlash = useCallback(() => {
@@ -1120,13 +1147,11 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   );
 
   /** 停止生成：保留已产出内容 */
-  const stopStreaming = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+  const stopStreaming = abortCurrentStream;
 
   /** 重新生成最后一条 AI 回复（回退到最后一条用户消息重新流式生成） */
   const regenerate = useCallback(() => {
-    if (!activeConv || streaming) return;
+    if (!activeConv || streaming || abortRef.current || !picked?.enabled) return;
     const items = activeConv.items;
     let cut = items.length;
     while (cut > 0 && items[cut - 1].role === "assistant") cut -= 1;
@@ -1134,13 +1159,19 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     const base = items.slice(0, cut);
     if (!base.some((c) => c.role === "user")) return;
     commitItems(activeConv.id, base);
-    jsonFallbackRef.current = false;
-    void runChat(activeConv.id, base);
-  }, [activeConv, streaming, commitItems, runChat]);
+
+    void runChat(activeConv.id, base, {
+      skillIds: base[base.length - 1].usedSkills?.map((s) => s.id),
+      workflowIds: base[base.length - 1].usedWorkflows?.map((w) => w.id),
+      capabilityIds: base[base.length - 1].usedCapabilities?.map((c) => c.id),
+      allowToolCalls: base[base.length - 1].allowToolCalls,
+    });
+  }, [activeConv, streaming, picked, commitItems, runChat]);
 
   const copyAnswer = useCallback(
     (content: string) => {
       const text = stripThink(stripArtifactRegion(content)).trim() || content;
+      if (!navigator.clipboard) { appMessage.warning("复制不可用，请手动选择文本复制"); return; }
       navigator.clipboard
         ?.writeText(text)
         .then(() => appMessage.success("已复制回答"))
@@ -1194,6 +1225,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     if (!gateways) return [];
     return gateways.map((g) => ({
       value: g.id,
+      disabled: !g.enabled,
       label: (
         <span>
           {g.is_default ? <span style={{ color: "#faad14", marginRight: 4 }}>★</span> : null}
@@ -1209,7 +1241,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
 
   // ============ 渲染：欢迎空状态（DeepSeek 风格居中） ============
   const renderWelcome = () => {
-    const noGateway = gateways !== null && gateways.length === 0;
+    const noGateway = gateways !== null && !gateways.some((g) => g.enabled);
     const cards = [
       ...QUICK_TEMPLATES.map((t) => ({
         key: t.key,
@@ -1393,6 +1425,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
           >
             {c.content}
           </div>
+          {!!c.usedCapabilities?.length && <Space wrap size={4}>{c.usedCapabilities.map((cap) => <Tag key={cap.id} color="blue">{cap.name}</Tag>)}</Space>}
           {/* 引用标签 */}
           {hasRefs && (
             <div
@@ -1459,6 +1492,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
               本次回复未生成有效内容（可能仅包含模型思考过程），请点击下方 ↻ 重新生成
             </div>
           )}
+          <ToolActivity runs={c.toolRuns} />
           {(!!c.usedDocs?.length || c.gatewayName) && (
             <div
               style={{
@@ -1543,19 +1577,21 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             </div>
           )}
 
+          {isError && i === activeConvItems.length - 1 && <Button size="small" icon={<ReloadOutlined />} disabled={!!streaming} onClick={regenerate}>重试</Button>}
+
           {/* 回复操作行：复制 / 重新生成 / 点赞 / 点踩 */}
           {!isError && (
             <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 2 }}>
               <ActionIconTip tip="复制" onClick={() => copyAnswer(visible || c.content)}>
                 <CopyOutlined />
               </ActionIconTip>
-              <ActionIconTip
+              {i === activeConvItems.length - 1 && <ActionIconTip
                 tip="重新生成"
                 disabled={!!streaming}
                 onClick={() => regenerate()}
               >
                 <ReloadOutlined />
-              </ActionIconTip>
+              </ActionIconTip>}
               <ActionIconTip
                 tip={c.feedback === "up" ? "已点赞" : "有帮助"}
                 active={c.feedback === "up"}
@@ -1585,6 +1621,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         <BrandAvatar size={32} radius={8} />
         <div style={{ flex: 1, minWidth: 0 }}>
+          <ToolActivity runs={liveToolRuns} />
           {text ? (
             <div style={{ fontSize: 15, lineHeight: 1.7 }}>
               <ChatMarkdown content={text} size={15} />
@@ -1642,109 +1679,26 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     );
   };
 
-  // ============ 渲染：composer（DeepSeek 风格：圆角容器 + pill 开关 + 圆形发送/停止） ============
+  // ============ 聊天输入区：配置 / 输入 / 操作 ============
   const renderComposer = () => {
-    const canSend = !!picked && !streaming && input.trim().length > 0;
+    const canSend = hydrated && !!picked?.enabled && !streaming && input.trim().length > 0;
     const placeholder = !picked
       ? "请先选择一个可用的 AI 网关"
-      : streaming
-        ? "正在生成…"
-        : "给 Qimu 发送消息 — Enter 发送，Shift + Enter 换行";
+      : streaming ? "正在生成…" : "输入消息，或输入 / 引用技能与工作流";
     const flatItems = slashGroups.flatMap((g) => g.items);
     const activeToken = flatItems[slashActiveIndex]?.token ?? null;
-    const slashTotal = flatItems.length;
     return (
-      <div style={{ padding: "10px 16px 14px" }}>
+      <div className={composerStyles.outer}>
         <div style={colStyle}>
-          <div
-            className="ai-composer"
-            style={{
-              background: "#fff",
-              border: "1px solid #e5e5e7",
-              borderRadius: 18,
-              padding: "8px 10px 6px",
-            }}
-          >
-            <SlashCommandMenu
-              open={slashOpen}
-              groups={slashGroups}
-              activeToken={activeToken}
-              isMobile={isMobile}
-              enableVirtual={slashTotal > 50}
-              onSelect={handleSlashSelect}
-              onClose={closeSlash}
-              onSkillAction={onSkillAction}
-              onWorkflowAction={onWorkflowAction}
-            />
-            {renderRefChips()}
-            <TextArea
-              ref={textAreaRef}
-              value={input}
-              onChange={handleSlashChange}
-              onPressEnter={(e) => {
-                // 面板打开时：Enter 仅确认选择，不发送（命令确认后由 closeSlash 关闭）
-                if ((slashOpenRef.current || slashConsumedRef.current) && !e.shiftKey) {
-                  e.preventDefault();
-                  slashConsumedRef.current = false;
-                  return;
-                }
-                if (!e.shiftKey && !streaming) {
-                  e.preventDefault();
-                  send();
-                }
-              }}
-              onKeyDown={handleSlashKeyDown}
-              onCompositionStart={() => {
-                isComposingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                isComposingRef.current = false;
-                // 组合结束（如拼音上屏）后再判定一次 slash 上下文
-                const el = textAreaRef.current?.resizableTextArea?.textArea;
-                if (el) {
-                  handleSlashChange({ target: el } as ChangeEvent<HTMLTextAreaElement>);
-                }
-              }}
-              placeholder={placeholder}
-              autoSize={{ minRows: 1, maxRows: 8 }}
-              disabled={!picked}
-              variant="borderless"
-              style={{
-                resize: "none",
-                padding: "6px 4px",
-                fontSize: 15,
-                lineHeight: 1.6,
-                background: "transparent",
-              }}
-            />
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 8,
-                flexWrap: "wrap",
-                marginTop: 4,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <PillSwitch
-                  icon={<DatabaseOutlined />}
-                  label="参考知识库"
-                  checked={useKnowledge}
-                  onChange={setUseKnowledge}
-                />
-                <PillSwitch
-                  icon={<SaveOutlined />}
-                  label="自动保存产物"
-                  checked={autoSave}
-                  onChange={setAutoSave}
-                />
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div className={`ai-composer ${composerStyles.composer}`}>
+            <SlashCommandMenu open={slashOpen} groups={slashGroups} activeToken={activeToken}
+              isMobile={isMobile} enableVirtual={flatItems.length > 50} onSelect={handleSlashSelect}
+              onClose={closeSlash} onSkillAction={onSkillAction} onWorkflowAction={onWorkflowAction} />
+            <div className={composerStyles.configuration}>
+              <div className={composerStyles.model}>
                 <Select
-                  size="small"
-                  variant="borderless"
+                  aria-label="选择模型"
+                  className={composerStyles.modelSelect}
                   value={pickedId ?? undefined}
                   loading={gateways === null}
                   placeholder={gateways === null ? "加载网关中…" : "选择模型"}
@@ -1752,17 +1706,80 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                   onChange={(v) => setPickedId(v)}
                   options={gatewayOptions}
                   optionFilterProp="label"
-                  popupMatchSelectWidth={320}
+                  popupMatchSelectWidth={isMobile ? 280 : 320}
                   suffixIcon={
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                       {picked && <ApiOutlined style={{ fontSize: 12, color: "#345d88" }} />}
                       <CaretDownOutlined style={{ fontSize: 10, color: "#8c8c8c" }} />
                     </span>
                   }
-                  style={{ minWidth: 120, maxWidth: 240, fontSize: 13, color: "#1f2329" }}
+                  style={{ width: "100%" }}
                 />
+              </div>
+              <Select mode="multiple" aria-label="选择 AI 能力" placeholder="选择 Skill、MCP 或插件"
+                className={composerStyles.capabilities} value={capabilityIds} onChange={setCapabilityIds}
+                maxCount={10} maxTagCount="responsive" loading={capabilitiesLoading} disabled={!!streaming}
+                optionFilterProp="label" options={capabilities.filter((c) => c.enabled).map((c) => ({ value: c.id, label: c.name }))} />
+              <Button aria-label="能力管理" onClick={() => setCapabilitiesOpen(true)} icon={<PlusOutlined />}>能力管理</Button>
+            </div>
+            {capabilitiesError && <Button type="link" size="small" danger onClick={() => setCapabilitiesOpen(true)}>能力加载失败，点击重试</Button>}
+            <div className={composerStyles.inputArea}>
+              {renderRefChips()}
+              <TextArea
+                aria-label="聊天内容"
+                ref={textAreaRef}
+                value={input}
+                onChange={handleSlashChange}
+                onPressEnter={(e) => {
+                  if (isComposingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  // 面板打开时：Enter 仅确认选择，不发送（命令确认后由 closeSlash 关闭）
+                  if ((slashOpenRef.current || slashConsumedRef.current) && !e.shiftKey) {
+                    e.preventDefault();
+                    slashConsumedRef.current = false;
+                    return;
+                  }
+                  if (!e.shiftKey && !streaming) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                onKeyDown={handleSlashKeyDown}
+                onCompositionStart={() => {
+                  isComposingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  isComposingRef.current = false;
+                  // 组合结束（如拼音上屏）后再判定一次 slash 上下文
+                  const el = textAreaRef.current?.resizableTextArea?.textArea;
+                  if (el) {
+                    handleSlashChange({ target: el } as ChangeEvent<HTMLTextAreaElement>);
+                  }
+                }}
+                placeholder={placeholder}
+                autoSize={{ minRows: 3, maxRows: 8 }}
+                disabled={!picked}
+                variant="borderless"
+                style={{
+                  resize: "none",
+                  padding: "4px 0",
+                  fontSize: 15,
+                  lineHeight: 1.6,
+                  background: "transparent",
+                }}
+              />
+            </div>
+            <div className={composerStyles.footer}>
+              <div className={composerStyles.options}>
+                <PillSwitch icon={<DatabaseOutlined />} label="参考知识库" checked={useKnowledge} onChange={setUseKnowledge} />
+                <Tooltip title="允许模型调用本次选择的 MCP 工具和已引用的工作台技能，调用可能修改外部数据。">
+                  <span><PillSwitch icon={<ApiOutlined />} label="允许工具调用" checked={allowToolCalls}
+                    onChange={(value) => { if (!streaming) setAllowToolCalls(value); }} /></span>
+                </Tooltip>
+              </div>
+              <div className={composerStyles.actions}>
                 <Tooltip title="清空当前对话">
                   <Button
+                    aria-label="清空当前对话"
                     type="text"
                     size="small"
                     icon={<ClearOutlined />}
@@ -1774,6 +1791,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                 {isAdmin && (
                   <Tooltip title="网关设置">
                     <Button
+                      aria-label="网关设置"
                       type="text"
                       size="small"
                       icon={<SettingOutlined />}
@@ -1783,84 +1801,17 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                   </Tooltip>
                 )}
 
-                {streaming ? (
-                  <Tooltip title="停止生成">
-                    <button
-                      type="button"
-                      aria-label="停止生成"
-                      onClick={stopStreaming}
-                      style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 18,
-                        border: "none",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: "#345d88",
-                        boxShadow: "0 2px 8px rgba(52, 93, 136,0.32)",
-                        cursor: "pointer",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: 3,
-                          background: "#fff",
-                          display: "inline-block",
-                        }}
-                      />
-                    </button>
-                  </Tooltip>
-                ) : (
-                  <Tooltip title={canSend ? "发送（Enter）" : picked ? "输入内容后发送" : "请先选择 AI 网关"}>
-                    <button
-                      type="button"
-                      aria-label="发送"
-                      disabled={!canSend}
-                      onClick={() => send()}
-                      style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 18,
-                        border: "none",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: canSend ? "#345d88" : "#e5e5e7",
-                        color: canSend ? "#fff" : "#bfbfbf",
-                        cursor: canSend ? "pointer" : "not-allowed",
-                        transition: "background .15s, box-shadow .15s, transform .1s",
-                        boxShadow: canSend ? "0 2px 8px rgba(52, 93, 136,0.32)" : "none",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <ArrowUpOutlined style={{ fontSize: 16 }} />
-                    </button>
-                  </Tooltip>
-                )}
+                <Tooltip title={streaming ? "停止生成" : canSend ? "发送（Enter）" : "输入内容后发送"}>
+                  <button type="button" aria-label={streaming ? "停止生成" : "发送"}
+                    className={composerStyles.send} disabled={!streaming && !canSend}
+                    onClick={() => streaming ? stopStreaming() : void send()}>
+                    {streaming ? <span className={composerStyles.stopIcon} /> : <ArrowUpOutlined />}
+                  </button>
+                </Tooltip>
               </div>
             </div>
           </div>
-          <div
-            style={{
-              marginTop: 6,
-              fontSize: 11,
-              color: "#bfbfbf",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <span>
-              Enter 发送 · Shift + Enter 换行 · 说出「技能 / 工作流 / 文档」即可自动创建
-            </span>
-            <span style={{ color: "#d9d9d9" }}>由 Qimu Desk 提供</span>
-          </div>
+          <div className={composerStyles.hint}>Enter 发送 · Shift + Enter 换行</div>
         </div>
       </div>
     );
@@ -1907,15 +1858,16 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
             type="text"
             size="small"
             icon={<MenuFoldOutlined />}
-            onClick={() => setRailOpen(false)}
+            onClick={() => { setRailOpen(false); setMobileRailOpen(false); }}
             style={{ color: "#8c8c8c", width: 26, height: 26 }}
           />
         </Tooltip>
       </div>
+      <Input allowClear aria-label="搜索对话" placeholder="搜索标题或内容" value={search} onChange={(e) => setSearch(e.target.value)} style={{ margin: "8px", width: "calc(100% - 16px)" }} />
       <div style={{ flex: 1, overflowY: "auto", padding: "2px 8px 12px" }}>
         {sortedConvs.length === 0 ? (
           <div style={{ padding: "18px 8px", textAlign: "center", color: "#bfbfbf", fontSize: 12 }}>
-            暂无对话
+            {search ? "未找到匹配的对话" : "暂无对话"}
             <br />
             点击上方开始
           </div>
@@ -1930,7 +1882,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                 tabIndex={0}
                 onClick={() => selectConv(c.id)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") selectConv(c.id);
+                  if (e.target === e.currentTarget && e.key === "Enter") selectConv(c.id);
                 }}
                 style={{
                   display: "flex",
@@ -1961,7 +1913,23 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                   className="ai-rail-del"
                   style={{ opacity: 0, transition: "opacity .15s", display: "inline-flex", flexShrink: 0 }}
                 >
+                  <Button type="text" size="small" aria-label="重命名对话" icon={<EditOutlined />} onClick={(e) => {
+                    e.stopPropagation();
+                    let title = convTitle(c);
+                    modal.confirm({ title: "重命名对话", content: <Input defaultValue={title} maxLength={80} aria-label="对话名称" onChange={(e) => { title = e.target.value; }} />, okText: "保存", cancelText: "取消", onOk: () => {
+                      if (!title.trim()) { appMessage.warning("请输入对话名称"); return Promise.reject(new Error("empty title")); }
+                      setConversations((prev) => prev.map((conv) => conv.id === c.id ? { ...conv, title: title.trim() } : conv));
+                    } });
+                  }} />
+                  <Button type="text" size="small" aria-label="导出对话" icon={<DownloadOutlined />} onClick={(e) => {
+                    e.stopPropagation();
+                    const content = `# ${convTitle(c)}\n\n` + c.items.map((m) => `## ${m.role === "user" ? "我" : "AI 助手"}\n\n${stripThink(stripArtifactRegion(m.content))}`).join("\n\n");
+                    const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
+                    const link = document.createElement("a"); link.href = url; link.download = `${convTitle(c).replace(/[\\/:*?"<>|]/g, "_")}.md`; link.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  }} />
                   <Button
+                    aria-label="删除对话"
                     type="text"
                     size="small"
                     danger
@@ -2111,17 +2079,17 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     >
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {/* 左侧会话栏（DeepSeek 风格；可折叠） */}
-        {railOpen && renderRail()}
+        {!isMobile && railOpen && renderRail()}
 
         {/* 主聊天区 */}
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           {/* 会话栏收起时：左上角展示「对话记录」展开按钮 */}
-          {!railOpen && (
+          {(isMobile || !railOpen) && (
             <Tooltip title="展开对话栏">
               <button
                 type="button"
                 aria-label="展开对话栏"
-                onClick={() => setRailOpen(true)}
+                onClick={() => isMobile ? setMobileRailOpen(true) : setRailOpen(true)}
                 style={{
                   position: "absolute",
                   left: 16,
@@ -2182,6 +2150,12 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         </div>
       </div>
 
+      {isMobile && <Drawer title="对话记录" placement="left" size={260} open={mobileRailOpen}
+        onClose={() => setMobileRailOpen(false)} styles={{ body: { padding: 0, display: "flex" } }}>
+        {renderRail()}
+      </Drawer>}
+      <CapabilitiesDrawer open={capabilitiesOpen} onClose={() => setCapabilitiesOpen(false)} capabilities={capabilities}
+        loading={capabilitiesLoading} error={capabilitiesError} reload={loadCapabilities} />
       <Drawer
         title="AI 网关设置（只读）"
         open={settingsOpen}
@@ -2229,6 +2203,7 @@ function PillSwitch({
         cursor: "pointer",
         lineHeight: 1.2,
         userSelect: "none",
+        whiteSpace: "nowrap",
         transition: "all 0.15s",
       }}
     >

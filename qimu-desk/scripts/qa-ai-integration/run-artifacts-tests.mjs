@@ -39,6 +39,7 @@ export async function exec(): Promise<never> { throw new Error("QA: unexpected e
 export async function withTransaction(): Promise<never> { throw new Error("QA: unexpected withTransaction call"); }
 export async function withColumnFallback(): Promise<never> { throw new Error("QA: unexpected withColumnFallback call"); }
 export async function ensureSourceColumns(): Promise<boolean> { return true; }
+export async function ensureVisibilityColumns(): Promise<boolean> { return true; }
 export function nowString(): string { return "2026-01-01 00:00:00"; }
 export function isBadFieldError(): boolean { return false; }
 export function isDuplicateKeyError(): boolean { return false; }
@@ -81,6 +82,7 @@ function buildSkillsTs() {
   const out = src
     .replaceAll('from "./db"', 'from "./stub-db.ts"')
     .replaceAll('from "./executor"', 'from "./stub-db.ts"')
+    .replaceAll('from "./visibility"', 'from "../../../core/visibility.ts"')
     .replaceAll('from "./ai/artifacts"', 'from "./stub-db.ts"');
   const p = join(TMP, "skills-under-test.ts");
   writeFileSync(p, out);

@@ -21,7 +21,7 @@ export type ChatMessage = { role: "system" | "user" | "assistant"; content: stri
 
 export type ChatResult = { ok: true; content: string } | { ok: false; error: string };
 
-/** 流式结果：aborted=true 表示请求被中止（用户停止 / 超时），部分内容可能已产出 */
+/** 流式结果：aborted=true 表示用户主动中止（超时按错误报告），部分内容可能已产出 */
 export type ChatStreamResult =
   | { ok: true; content: string }
   | { ok: false; error: string; aborted?: boolean };
@@ -163,7 +163,7 @@ export function aiReady(cfg: AiConfig): boolean {
 }
 
 /** 把 base_url 规范化为 chat/completions 地址（兼容 /v1、/v1/、完整地址） */
-function completionsUrl(baseUrl: string): string {
+export function completionsUrl(baseUrl: string): string {
   const base = baseUrl.trim().replace(/\/+$/, "");
   if (/\/chat\/completions$/i.test(base)) return base;
   return `${base}/chat/completions`;
@@ -232,7 +232,7 @@ export async function testConnection(): Promise<ChatResult> {
  * 每产出一段文本立即回调 onDelta；全部完成后 resolve。
  * - 支持外部 signal（如客户端断开/停止）：中止时返回 { ok:false, aborted:true }
  * - 无外部 signal 时内置 120s 兜底超时
- * - 内容为 0 且网关未按 SSE 返回时，回退返回普通空内容错误（由调用方降级非流式）
+ * - 兼容网关直接返回 JSON 的情况，消费同一响应，不重复请求
  */
 export async function chatLlmStream(opts: {
   messages: ChatMessage[];
@@ -279,6 +279,16 @@ export async function chatLlmStream(opts: {
       const body = (await res.text()).slice(0, 500);
       return { ok: false, error: `AI 网关返回 HTTP ${res.status}：${body || res.statusText}` };
     }
+    // Some compatible gateways ignore stream=true and return JSON. Consume that
+    // response directly, without replaying the request (which may have side effects).
+    if (res.headers.get("content-type")?.includes("application/json")) {
+      const data = await res.json() as { choices?: { message?: { content?: string } }[]; error?: { message?: string } };
+      if (data.error?.message) return { ok: false, error: `AI 网关错误：${data.error.message}` };
+      const reply = data.choices?.[0]?.message?.content;
+      if (!reply) return { ok: false, error: "AI 网关返回了空内容" };
+      opts.onDelta(reply);
+      return { ok: true, content: reply };
+    }
     if (!res.body) return { ok: false, error: "AI 网关未返回流式内容（body 为空）" };
 
     const reader = res.body.getReader();
@@ -286,8 +296,7 @@ export async function chatLlmStream(opts: {
     let buf = "";
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
+      buf += done ? decoder.decode() + "\n" : decoder.decode(value, { stream: true });
       let nl: number;
       while ((nl = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, nl).trim();
@@ -314,13 +323,14 @@ export async function chatLlmStream(opts: {
           // 忽略无法解析的行（keep-alive / 空行等）
         }
       }
+      if (done) break;
     }
     if (!content) return { ok: false, error: "AI 网关返回了空内容（未按流式格式输出）" };
     return { ok: true, content };
   } catch (err) {
     const aborted = controller.signal.aborted;
     if ((err as Error).name === "AbortError") {
-      return { ok: false, error: aborted ? (external?.aborted ? "已停止生成" : "AI 请求超时（120 秒）") : "AI 请求超时", aborted: true };
+      return { ok: false, error: aborted ? (external?.aborted ? "已停止生成" : "AI 请求超时（120 秒）") : "AI 请求超时", aborted: external?.aborted === true };
     }
     const msg = (err as Error).message || String(err);
     return { ok: false, error: `AI 请求失败：${msg}` };

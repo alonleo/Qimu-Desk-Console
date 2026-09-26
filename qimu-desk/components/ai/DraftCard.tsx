@@ -116,7 +116,7 @@ function editorFromPayload(kind: ArtifactKind, payload: DraftPayload): EditorFie
  * - 折叠态紧凑预览；「编辑」展开字段表单（复杂结构用 JSON TextArea + 本地预检）；
  * - 保存调用 POST /api/skills|workflows|knowledge（source:'ai'）；
  * - 409 NAME_CONFLICT → 冲突态三选一：覆盖更新(mode:overwrite)/另存新名/放弃；
- * - autoSave 已落库时由 initialSaveResult 驱动为「已保存」态。
+ * - 历史保存结果由 initialSaveResult 恢复为「已保存」态。
  *
  * P2-3 批量保存：通过可选 handleRef 把「以 create 模式保存一次」暴露给外层（如全部保存按钮）。
  */

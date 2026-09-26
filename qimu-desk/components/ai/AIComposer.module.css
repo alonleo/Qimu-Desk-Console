@@ -1,0 +1,129 @@
+.outer {
+  padding: 12px 0 10px;
+  container-type: inline-size;
+}
+
+.composer {
+  position: relative;
+  border: 1px solid #dce2e8;
+  border-radius: 16px;
+  background: #fff;
+  padding: 12px 14px;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.composer:focus-within {
+  border-color: #345d88;
+  box-shadow: 0 0 0 2px rgb(52 93 136 / 8%);
+}
+
+.configuration {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.model,
+.modelSelect,
+.capabilities {
+  min-width: 0;
+  width: 100%;
+}
+
+.inputArea {
+  padding: 14px 2px 12px;
+}
+
+.footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.options,
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.options {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.actions {
+  flex-shrink: 0;
+}
+
+.send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  border: 0;
+  border-radius: 12px;
+  background: #345d88;
+  color: #fff;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.send:hover:not(:disabled) {
+  background: #284d75;
+}
+
+.send:focus-visible {
+  outline: 2px solid #345d88;
+  outline-offset: 3px;
+}
+
+.send:disabled {
+  background: #edf0f3;
+  color: #a5aeb9;
+  cursor: not-allowed;
+}
+
+.stopIcon {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: currentColor;
+}
+
+.hint {
+  padding: 8px 2px 0;
+  color: #8c98a5;
+  font-size: 11px;
+  text-align: right;
+}
+
+@container (max-width: 560px) {
+  .configuration { grid-template-columns: minmax(0, 1fr) auto; }
+  .model { grid-column: 1 / -1; }
+  .footer { flex-wrap: wrap; gap: 8px; }
+  .options { width: 100%; }
+  .actions { margin-left: auto; }
+}
+
+@media (max-width: 640px) {
+  .outer { padding-top: 8px; }
+  .composer { padding: 10px 12px; }
+  .configuration { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .model { grid-column: 1 / -1; }
+  .inputArea { padding-block: 12px; }
+  .footer { flex-wrap: wrap; gap: 8px; }
+  .options { width: 100%; }
+  .actions { margin-left: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer { transition: none; }
+}

@@ -6,8 +6,7 @@
  *   （core/skills.ts createSkill、core/workflows.ts createWorkflow），避免双份漂移；
  * - extractArtifacts：解析模型正文里的 <artifacts> 块 / ```json 围栏；
  * - normalizeDraft：逐条 safeParse + 生成 issues；
- * - writeArtifact：按 kind 调 createSkill / createWorkflow / createDoc（autoSave 与
- *   DraftCard 手动保存共用同一落库逻辑）。
+ * - writeArtifact：按 kind 调 createSkill / createWorkflow / createDoc，供显式保存调用。
  *
  * 依赖方向说明：本模块值依赖 core/skills、core/workflows、core/knowledge；
  * 这三个 core 模块对 artifacts 只做 `import type`（编译期擦除），故无运行时循环依赖。
@@ -268,7 +267,7 @@ export function normalizeDraft(raw: unknown): { draft?: ChatDraft } | { skipped:
 // —— 写通道编排 ——
 
 /**
- * 按 kind 落库（autoSave 与 DraftCard 手动保存共用）：
+ * 按 kind 执行显式保存：
  * - skill/workflow 深校验 + 重名/overwrite 语义在 createSkill/createWorkflow 内；
  * - knowledge 经 createDoc 落库，username 用于 created_by；
  * - source 默认 'ai'（AI 产物入库标记）。

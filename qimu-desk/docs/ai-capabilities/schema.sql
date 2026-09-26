@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS ai_capabilities (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  owner_id BIGINT NOT NULL,
+  kind VARCHAR(16) NOT NULL,
+  name VARCHAR(80) NOT NULL,
+  description TEXT NOT NULL,
+  config MEDIUMTEXT NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_ai_capability_owner_kind_name (owner_id, kind, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
