@@ -35,4 +35,24 @@ Git 自动发布器需要按上表选择子目录，不能继续使用旧版“�
 6. 停用旧仓库轮询任务，防止旧代码覆盖新版本。
 7. 验证成功后，仅清理已明确指定的旧应用及旧库，不影响其他站点、共享 MySQL/Redis 或备份。
 
-本文为部署准备说明，不代表远程迁移或清理已执行。
+## 当前部署（2026-09-27）
+
+已通过工作区中的 `workbuddy-1panel-deploy` 完成发布、切换与旧应用清理。
+本次发布的应用源码版本：`cf3c96ff2c606f002218d0fb84cee834f5cd8cf4`。
+
+| 服务 | 域名 | 容器 | 宿主机回环端口 |
+| --- | --- | --- | --- |
+| 工作台 | https://work.lordleo.top | `qimu-desk` | `13010 → 3000` |
+| 管理台 | https://admin.lordleo.top | `qimu-console` | `13011 → 3000` |
+| 共享后端 | 经两站点代理访问 | `qimu-backend` | `18080 → 8080` |
+
+- 发布根目录：`/home/webuser/deploy/Qimu-Desk-Console`；子目录为 `qimu-desk`、`qimu-console`、`backend`、`config`。
+- 独立 Docker 网络为 `qimu-network`；后端网络别名 `admin-backend` 与构建期 rewrite 地址一致。
+- 共享 MySQL/Redis 实例保持原有服务；Qimu 使用独立数据库 `qimu_platform`、专用数据库用户及 Redis DB 1。
+- 三个生产环境文件仅保存在服务器 `config` 目录，权限 600；禁止提交或复制到公开仓库。
+- 工作台设置 `APP_URL=https://work.lordleo.top`，用于生产 Cookie 和来源校验。
+- 旧应用、旧数据库 `workbench_admin` 和对应发布/初始化任务已移除；切换前备份单独保留。
+- 已验证两域名登录页、真实登录、当前用户、受保护页面、数据库健康检查及预览入口返回 404。
+- 本次采用本地生产构建后上传、校验 SHA-256 再切换的方式；未启用 Git 定时自动发布。
+
+后续更新时先在子目录完成生产构建，将 standalone、static、public 和后端 JAR 一并打包；保留服务器配置，备份当前版本，替换产物后重建对应容器并验证上述检查。每个服务目录的 `.deploy-version` 必须记录实际构建的源码提交。
