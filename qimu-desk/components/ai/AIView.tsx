@@ -314,10 +314,10 @@ function stripArtifactRegion(text: string): string {
 
 /** 过滤推理模型的 <think>…</think> 思考区段（含流式中尚未闭合的尾部 <think>…） */
 function stripThink(text: string): string {
-  if (!text.includes("<think>")) return text;
+  if (!/<think>/i.test(text)) return text;
   return text
-    .replace(/<think>[\s\S]*?<\/think>/g, "")
-    .replace(/<think>[\s\S]*$/, "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*$/gi, "")
     .trim();
 }
 
@@ -829,7 +829,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
         const rawContent = finalReply ?? (raw.trim() ? raw.trim() : null);
         if (rawContent || meta.drafts?.length || toolRuns.length) {
           // 仅保存可展示正文；草稿独立保留，避免仅含产物时丢失操作卡片。
-          const cleaned = stripThink(stripArtifactRegion(rawContent || "")).trim();
+          const cleaned = stripArtifactRegion(stripThink(rawContent || "")).trim();
           const emptyError = /<think>/i.test(rawContent || "")
             ? "模型仅返回了思考内容，未生成正式回答。请重试、缩短问题或切换模型。"
             : "AI 未返回有效正文，请重试或切换模型。";
@@ -1174,7 +1174,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
 
   const copyAnswer = useCallback(
     (content: string) => {
-      const text = stripThink(stripArtifactRegion(content)).trim() || content;
+      const text = stripArtifactRegion(stripThink(content)).trim() || content;
       if (!navigator.clipboard) { appMessage.warning("复制不可用，请手动选择文本复制"); return; }
       navigator.clipboard
         ?.writeText(text)
@@ -1460,7 +1460,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
     }
     const isError = c.error === true;
     // 展示正文 = 剥离思考段/产物段后的内容；为空说明该条只有思考过程（历史数据或极端模型输出）
-    const visible = stripThink(stripArtifactRegion(c.content)).trim();
+    const visible = stripArtifactRegion(stripThink(c.content)).trim();
     return (
       <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         <BrandAvatar size={32} radius={8} />
@@ -1620,7 +1620,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
   // ============ 渲染：流式进行中（逐字 + 闪烁光标） ============
   const renderStreaming = () => {
     if (!streaming) return null;
-    const text = stripThink(stripArtifactRegion(streaming.text)).trim();
+    const text = stripArtifactRegion(stripThink(streaming.text)).trim();
     return (
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         <BrandAvatar size={32} radius={8} />
@@ -1927,7 +1927,7 @@ export default function AIView({ isAdmin }: { isAdmin: boolean }) {
                   }} />
                   <Button type="text" size="small" aria-label="导出对话" icon={<DownloadOutlined />} onClick={(e) => {
                     e.stopPropagation();
-                    const content = `# ${convTitle(c)}\n\n` + c.items.map((m) => `## ${m.role === "user" ? "我" : "AI 助手"}\n\n${stripThink(stripArtifactRegion(m.content))}`).join("\n\n");
+                    const content = `# ${convTitle(c)}\n\n` + c.items.map((m) => `## ${m.role === "user" ? "我" : "AI 助手"}\n\n${stripArtifactRegion(stripThink(m.content))}`).join("\n\n");
                     const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
                     const link = document.createElement("a"); link.href = url; link.download = `${convTitle(c).replace(/[\\/:*?"<>|]/g, "_")}.md`; link.click();
                     setTimeout(() => URL.revokeObjectURL(url), 1000);

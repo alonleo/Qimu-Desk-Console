@@ -183,7 +183,10 @@ function collectDrafts(list: unknown[]): { drafts: ChatDraft[]; skipped: string[
  *   不截断、drafts=[], skipped=[]（P0 纯问答无回归）。
  */
 export function extractArtifacts(content: string): ExtractResult {
-  const src = typeof content === "string" ? content : "";
+  // 先移除推理区，再解析产物；思考中的协议示例不是用户可保存的草稿。
+  const src = (typeof content === "string" ? content : "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*$/gi, "");
   const tagStart = src.lastIndexOf("<artifacts>");
   const tagEndRel = tagStart >= 0 ? src.indexOf("</artifacts>", tagStart) : -1;
 

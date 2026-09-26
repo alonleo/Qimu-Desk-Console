@@ -16,3 +16,8 @@ for (const block of [`<artifacts>${draft}</artifacts>`, '```json\n' + draft + '\
   assert.equal(result.drafts.length, 1);
 }
 console.log('PASS: answers after tagged and fenced artifacts are preserved');
+{
+  const result = extract('<think>格式示例：<artifacts>'+draft+'</artifacts></think>\n这是正式回答');
+  assert.equal(result.reply,'这是正式回答');
+  assert.equal(result.drafts.length,0,'draft examples in thinking must never become savable drafts');
+}

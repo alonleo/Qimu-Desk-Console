@@ -88,3 +88,10 @@ console.log('PASS: HTTP errors, EOF, truncated stream, stop, stale response isol
   assert.equal(answer.error, true, 'reasoning-only output must not be stored as a successful answer');
   assert.match(answer.content, /思考/);
 }
+// 思考正文里提到产物协议时，不得把正式回答一并裁掉。
+{
+  const h = harness(async () => sse('data: '+JSON.stringify({type:'done',reply:'<think>本次是普通问答，不要输出 <artifacts> 标签。</think>\n我可以帮你整理知识、创建技能和工作流。'})+'\n\n'));
+  await h.context.run('a',user);h.flush();
+  assert.equal(h.state.commits[0].items.at(-1).content,'我可以帮你整理知识、创建技能和工作流。');
+  assert.equal(h.state.commits[0].items.at(-1).error,undefined);
+}
