@@ -73,7 +73,7 @@ function highlightJson(text: string): ReactNode[] {
   return nodes;
 }
 
-function JsonBlock({ value, maxHeight = 240 }: { value: unknown; maxHeight?: number }) {
+function JsonBlock({ value, maxHeight = 240 }: { value: unknown; maxHeight?: number | "none" }) {
   const text = useMemo(() => JSON.stringify(value, null, 2), [value]);
   return (
     <pre
@@ -294,10 +294,13 @@ function cellTd(extra?: React.CSSProperties): React.CSSProperties {
 export default function RunOutput({
   output,
   maxHeight = 360,
+  expanded = false,
 }: {
   output: string;
   maxHeight?: number;
+  expanded?: boolean;
 }) {
+  const contentHeight = expanded ? undefined : maxHeight;
   const parsed = useMemo(() => tryParseJson(output), [output]);
   const kind: Kind = useMemo(() => {
     if (parsed !== undefined) return "json";
@@ -339,8 +342,9 @@ export default function RunOutput({
           padding: 10,
           background: "#fff",
           borderRadius: 8,
-          fontSize: 12,
-          maxHeight,
+          fontSize: expanded ? 14 : 12,
+          lineHeight: 1.85,
+          maxHeight: contentHeight,
           overflowY: "auto",
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
@@ -353,14 +357,14 @@ export default function RunOutput({
     body = (
       <div
         style={{
-          maxHeight,
+          maxHeight: contentHeight,
           overflowY: "auto",
           background: "#fff",
           borderRadius: 8,
           padding: "4px 10px",
         }}
       >
-        <ChatMarkdown content={extracted} size={13} />
+        <ChatMarkdown content={extracted} size={expanded ? 15 : 13} />
       </div>
     );
   } else if (kind === "json") {
@@ -368,31 +372,31 @@ export default function RunOutput({
     body =
       Array.isArray(v) ? (
         v.length > 0 && v.every(isPlainObject) ? (
-          <div style={{ maxHeight, overflowY: "auto", borderRadius: 8 }}>
+          <div style={{ maxHeight: contentHeight, overflowY: "auto", borderRadius: 8 }}>
             <JsonArrayTable items={v} />
           </div>
         ) : (
-          <JsonBlock value={v} maxHeight={maxHeight} />
+          <JsonBlock value={v} maxHeight={expanded ? "none" : maxHeight} />
         )
       ) : isPlainObject(v) ? (
-        <div style={{ maxHeight, overflowY: "auto", borderRadius: 8 }}>
+        <div style={{ maxHeight: contentHeight, overflowY: "auto", borderRadius: 8 }}>
           <JsonObjectTable obj={v} />
         </div>
       ) : (
-        <JsonBlock value={v} maxHeight={maxHeight} />
+        <JsonBlock value={v} maxHeight={expanded ? "none" : maxHeight} />
       );
   } else {
     body = (
       <div
         style={{
-          maxHeight,
+          maxHeight: contentHeight,
           overflowY: "auto",
           background: "#fff",
           borderRadius: 8,
           padding: "4px 10px",
         }}
       >
-        <ChatMarkdown content={output} size={13} />
+        <ChatMarkdown content={output} size={expanded ? 15 : 13} />
       </div>
     );
   }
